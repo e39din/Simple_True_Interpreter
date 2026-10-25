@@ -1,0 +1,1370 @@
+package be.`true`
+
+import java.io.File
+import java.lang.Long
+import kotlin.collections.get
+import kotlin.collections.iterator
+
+data class Line(val number: Int, val text: String)
+data class Error(val lineNumber: Int, val message: String)
+data class FunctionDef(val source: String, val name: String, val body: List<Line>)
+enum class Status { STOPPED, RUNNING, PAUSED, FINISHED }
+
+data class StepResult(
+    val currentStep: Int,
+    val changedVariables: Map<String, String>,
+    val removedVariables: List<String>,
+    val log: String,
+    val status: Status,
+    val command: String? = null,
+    val errorLine: Int? = null
+)
+
+data class Snapshot(
+    val currentStep: Int,
+    val variables: Map<String, String>,
+    val hidden: Set<String>,
+    val results: Map<String, String>,
+    val constants: Set<String>,
+    val splitters: Map<String, Map<Char, String>>,
+    val log: List<LogEntry>,
+    val status: Status,
+    val returnValue: String?,
+    val hasReturn: Boolean
+)
+
+data class LogEntry(val text: String, val type: String, val lineNumber: Int? = null)
+
+class Interpreter(
+    var tabCaller: ((String, String) -> String)? = null,
+    var tabCallerAsync: ((String, String) -> Unit)? = null,
+    var tabExists: ((String) -> Boolean)? = null,
+    var funcCaller: ((String, String, String, Boolean) -> String)? = null,
+    var funcExists: ((String, String) -> Boolean)? = null
+) {
+    var currentStep: Int = 1; private set
+    var status: Status = Status.STOPPED; private set
+
+    val variables = linkedMapOf<String, String>()
+    val hiddenVariables = linkedSetOf<String>()
+    val results = linkedMapOf<String, String>()
+    val constants = linkedSetOf<String>()
+    val splitters = linkedMapOf<String, MutableMap<Char, String>>()
+
+    private val webSockets = mutableMapOf<String, AutoCloseable>()
+
+    var log: List<LogEntry> = emptyList(); private set
+    var returnValue: String? = null; private set
+    var hasReturn: Boolean = false; private set
+
+    private val history = ArrayDeque<Snapshot>()
+    var historyLimit: Int = 12
+
+    private val nameRegexCache = mutableMapOf<String, Regex>()
+    private var combinedRegex: Regex? = null
+    private var combinedRegexDirty = true
+    private val rpnCache = mutableMapOf<String, List<String>>()
+    private val mathResultCache = mutableMapOf<String, String>()
+
+    private fun regexFor(name: String): Regex =
+        nameRegexCache.getOrPut(name) {
+            Regex("(?<![A-Za-z0-9_:])${Regex.escape(name)}(?![A-Za-z0-9_])")
+        }
+
+    private fun getCombinedRegex(): Regex? {
+        if (combinedRegexDirty) {
+            val names = variables.keys.filter { it.isNotBlank() && it != variables[it] }
+                .sortedByDescending { it.length }
+            combinedRegex = if (names.isEmpty()) null
+            else Regex("(?<![A-Za-z0-9_:])(${names.joinToString("|") { Regex.escape(it) }})(?![A-Za-z0-9_])")
+            combinedRegexDirty = false
+        }
+        return combinedRegex
+    }
+
+    private fun invalidateSubstituteCache() { combinedRegexDirty = true }
+
+    fun forceStep(n: Int) { currentStep = n.coerceAtLeast(1) }
+    fun setStatusPublic(s: Status) { status = s }
+    private fun setStatus(s: Status) { status = s }
+
+    fun parse(code: String): List<Line> = code.lines().mapIndexed { i, t -> Line(i + 1, t) }
+
+    fun validate(lines: List<Line>, strict: Boolean = false): List<Error> {
+        val labels = collectLabels(lines)
+        val errors = mutableListOf<Error>()
+        var inFunction = false
+        for (line in lines) {
+            val t = line.text.trim()
+            if (t.isEmpty() || t.startsWith("\\")) continue
+
+            if (Regex("""^[A-Za-z_]\w*:[A-Za-z_]\w*:$""").matches(t)) { inFunction = true; continue }
+            if (Regex("""^:[A-Za-z_]\w*\s*$""").matches(t)) { inFunction = false; continue }
+
+            val qCount = t.count { it == '?' } - t.count { it == '\\' }
+            if (qCount > 1) errors += Error(line.number, "Multiple ? on one line")
+
+            if (inFunction && RETURN_RE.matches(t)) {
+                errors += Error(line.number, "=> return inside function (use :return)")
+                continue
+            }
+
+            if (strict) {
+                if (Regex("""^[A-Za-z_]\w*:[A-Za-z_]\w*:$""").matches(t)) {
+                    errors += Error(line.number, "Strict Mode: function declarations are forbidden")
+                    continue
+                }
+                val forbidden = Regex("""(?<!\\):([A-Za-z_]\w*)""")
+                val m = forbidden.find(t)
+                if (m != null) {
+                    val name = m.groupValues[1]
+                    val allowed = name in setOf("parameters", "return", "l", "x", "y", "z")
+                    if (!allowed) {
+                        errors += Error(line.number, "Strict Mode: ':$name' is forbidden")
+                        continue
+                    }
+                }
+            }
+
+            val target = extractJumpTarget(t) ?: continue
+            if (!targetExists(target, labels, lines.size)) {
+                errors += Error(line.number, "Unknown jump target: $target")
+            }
+        }
+        return errors
+    }
+
+    private fun collectLabels(lines: List<Line>): Set<String> {
+        val set = mutableSetOf<String>()
+        for (l in lines) LABEL_RE.find(l.text.trim())?.let { set += it.groupValues[1] }
+        return set
+    }
+
+    private fun extractJumpTarget(text: String): String? = JUMP_RE.find(text)?.groupValues?.get(1)
+
+    private fun targetExists(target: String, labels: Set<String>, lineCount: Int): Boolean {
+        if (target.startsWith("step:")) {
+            val n = target.removePrefix("step:").toIntOrNull() ?: return false
+            return n in 1..lineCount
+        }
+        return target in labels
+    }
+
+    /** Публичный: собирает объявления функций из кода. */
+    fun collectFunctions(code: String): List<FunctionDef> {
+        val lines = code.lines()
+        val out = mutableListOf<FunctionDef>()
+        var i = 0
+        while (i < lines.size) {
+            val header = Regex("""^([A-Za-z_]\w*):([A-Za-z_]\w*):$""").find(lines[i].trim())
+            if (header == null) { i++; continue }
+            val src = header.groupValues[1]
+            val fn = header.groupValues[2]
+            val start = i + 1
+            var end = lines.size - 1
+            for (j in start until lines.size) {
+                if (Regex("""^:[A-Za-z_]\w*\s*$""").matches(lines[j].trim())) { end = j; break }
+            }
+            val bodyLines = (start..end).map { idx -> Line(idx + 1, lines[idx]) }
+            out += FunctionDef(src, fn, bodyLines)
+            i = end + 1
+        }
+        return out
+    }
+
+    fun executeOneStep(code: String): StepResult {
+        saveSnapshot()
+        val lines = parse(code)
+        if (lines.isEmpty()) return finish("End of program", Status.FINISHED)
+        if (currentStep > lines.size) {
+            currentStep = 1
+            return StepResult(currentStep, emptyMap(), emptyList(), "Loop → step 1", status)
+        }
+        return executeLine(lines[currentStep - 1], lines)
+    }
+
+    private fun executeLine(line: Line, lines: List<Line>): StepResult {
+        val raw = line.text.trim()
+        if (raw.isEmpty()) return stepForward("Step ${line.number}: empty line")
+        if (raw.startsWith("\\")) return stepForward("Step ${line.number}: literal string")
+
+        val qIdx = findUnescaped(raw, '?')
+        if (qIdx > 0) {
+            val cond = raw.substring(0, qIdx).trim()
+            val action = raw.substring(qIdx + 1).trim()
+            if (action.isEmpty()) return stepForward("Step ${line.number}: ? is text")
+            val ok = try { evalCondition(cond) } catch (e: Exception) {
+                return fail(line.number, "Condition error: ${e.message}")
+            }
+            if (!ok) return stepForward("Condition false → continue")
+            return applyOp(executeOperation(action, line, lines, "Condition true → "))
+        }
+        return applyOp(executeOperation(raw, line, lines, ""))
+    }
+
+    private fun applyOp(op: OpResult): StepResult {
+        if (op.errorLine != null) {
+            setStatus(Status.PAUSED)
+            return StepResult(currentStep, emptyMap(), emptyList(), op.log, Status.PAUSED, null, op.errorLine)
+        }
+        if (op.newStatus != null) setStatus(op.newStatus)
+        if (op.step != null) {
+            currentStep = op.step
+            return StepResult(currentStep, op.changed, op.removed,
+                "${op.log} (step $currentStep)", status, op.command)
+        }
+        if (status == Status.FINISHED)
+            return StepResult(currentStep, op.changed, op.removed, op.log, status, op.command)
+        return stepForward(op.log, op.changed, op.removed, op.command)
+    }
+
+    private fun stepForward(log: String, changed: Map<String, String> = emptyMap(),
+                            removed: List<String> = emptyList(), command: String? = null): StepResult {
+        currentStep += 1
+        return StepResult(currentStep, changed, removed, log, status, command)
+    }
+
+    private fun finish(log: String, s: Status): StepResult {
+        setStatus(s)
+        return StepResult(currentStep, emptyMap(), emptyList(), log, s)
+    }
+
+    private fun fail(lineNumber: Int, message: String): StepResult {
+        setStatus(Status.PAUSED)
+        return StepResult(currentStep, emptyMap(), emptyList(),
+            "Error on line $lineNumber: $message", Status.PAUSED, null, lineNumber)
+    }
+
+    private data class OpResult(
+        val step: Int? = null,
+        val changed: Map<String, String> = emptyMap(),
+        val removed: List<String> = emptyList(),
+        val log: String,
+        val newStatus: Status? = null,
+        val command: String? = null,
+        val errorLine: Int? = null
+    )
+
+    private fun executeOperation(op: String, line: Line, lines: List<Line>, prefix: String): OpResult {
+        JSON_GET_RE.matchEntire(op)?.let { return runJsonGet(it, prefix) }
+        JSON_SET_RE.matchEntire(op)?.let { return runJsonSet(it, prefix) }
+        JSON_NAMES_RE.matchEntire(op)?.let { return runJsonNames(it, prefix) }
+        JSON_VALUES_RE.matchEntire(op)?.let { return runJsonValues(it, prefix) }
+        DATA_RE.matchEntire(op)?.let { return runDataOp(it, line, prefix) }
+        FILTER_RE.matchEntire(op)?.let { return runFilter(it, prefix) }
+        MATCHES_RE.matchEntire(op)?.let { return runMatches(it, prefix) }
+        SPLITTER_RE.matchEntire(op)?.let { m ->
+            val src = m.groupValues[1].trim(); val axis = m.groupValues[2][0]; val sep = m.groupValues[3].trim()
+            splitters.getOrPut(src) { mutableMapOf() }[axis] = sep
+            return OpResult(log = "${prefix}Splitter '$src' axis '$axis' = '$sep'")
+        }
+        FOREACH_RE.matchEntire(op)?.let { return runForeach(it, line, lines, prefix) }
+        FUNC_RETURN_RE.matchEntire(op)?.let { m ->
+            val name = m.groupValues[1]
+            val raw = variables[name] ?: results[name] ?: substitute(name)
+            returnValue = raw; hasReturn = true
+            return OpResult(log = "Func :return '$name' → '${raw.take(40)}'", newStatus = Status.FINISHED)
+        }
+        RETURN_RE.matchEntire(op)?.let { m ->
+            val raw = substitute(m.groupValues[1].trim())
+            returnValue = raw; hasReturn = true
+            return OpResult(log = "Command return → '${raw.take(40)}'", newStatus = Status.FINISHED)
+        }
+        ACTIVE_TAB_RE.matchEntire(op)?.let { m ->
+            val idx = (substitute(m.groupValues[1].trim())).toIntOrNull() ?: 1
+            val step = m.groupValues[2].trim().toIntOrNull() ?: currentStep
+            return OpResult(step = step, command = "activeTab:$idx",
+                log = "Command activeTab → $idx (step $step)")
+        }
+        COMMAND_RE.matchEntire(op)?.let { return runCommand(it.groupValues[1], prefix) }
+        JUMP_RE.matchEntire(op)?.let {
+            val target = it.groupValues[1]
+            return OpResult(step = resolveTarget(target, lines), log = "${prefix}Jump to $target")
+        }
+        LOG_MOVE_RE.matchEntire(op)?.let { return runLogMove(it, prefix) }
+        LOG_GET_RE.matchEntire(op)?.let { return runLogGet(it, prefix) }
+        MATH_CHAIN_RE.matchEntire(op)?.let { return runMathChain(it, line, prefix) }
+        MATH_NAMED_RE.matchEntire(op)?.let { return runMathNamed(it, prefix) }
+        MATH_RE.matchEntire(op)?.let { return runMath(it, line, prefix) }
+        SIZE_AXIS_RE.matchEntire(op)?.let { return runSizeAxis(it, line, prefix) }
+        SIZE_RE.matchEntire(op)?.let { return runSize(it, line, prefix) }
+        CONSOLE_RE.matchEntire(op)?.let { return runConsole(it, prefix) }
+        RUN_RE.matchEntire(op)?.let { return runProgram(it, prefix) }
+        FILE_RE.matchEntire(op)?.let { return runFile(it, prefix) }
+        API_WS_RE.matchEntire(op)?.let { return runApiWs(it, prefix) }
+        API_RE.matchEntire(op)?.let { return runApi(it, prefix) }
+        SAVE_RE.matchEntire(op)?.let { return runSave(it, prefix) }
+        LOAD_RE.matchEntire(op)?.let { return runLoad(it, prefix) }
+        FUNC_CALL_LOCAL_RE.matchEntire(op)?.let { m ->
+            val src = m.groupValues[2].trim(); val fn = m.groupValues[3].trim()
+            if (funcExists?.invoke(src, fn) == true) {
+                val data = substitute(m.groupValues[1].trim())
+                val result = funcCaller?.invoke(src, fn, data, false) ?: ""
+                results["$src:$fn"] = result
+                return OpResult(log = "Local call $src:$fn('$data') → ${result.take(40)}")
+            }
+        }
+        FUNC_CALL_COPY_RE.matchEntire(op)?.let { m ->
+            val src = m.groupValues[2].trim(); val fn = m.groupValues[3].trim()
+            if (funcExists?.invoke(src, fn) == true) {
+                val data = substitute(m.groupValues[1].trim())
+                val result = funcCaller?.invoke(src, fn, data, false) ?: ""
+                results["$src:$fn"] = result
+                return OpResult(log = "Func call $src:$fn('$data') → ${result.take(40)}")
+            }
+        }
+        TAB_CALL_ASYNC_RE.matchEntire(op)?.let { m ->
+            val name = m.groupValues[2].trim().removeSuffix("!")
+            if (tabExists?.invoke(name) == true) {
+                tabCallerAsync?.invoke(name, substitute(m.groupValues[1].trim()))
+                return OpResult(log = "Async tab call $name started")
+            }
+        }
+        TAB_CALL_RE.matchEntire(op)?.let { m ->
+            val name = m.groupValues[2].trim()
+            if (tabExists?.invoke(name) == true) {
+                val data = substitute(m.groupValues[1].trim())
+                val result = tabCaller?.invoke(name, data) ?: ""
+                results[name] = result
+                return OpResult(log = "Tab call $name('$data') → ${result.take(40)}")
+            }
+        }
+        MOVE_RE.matchEntire(op)?.let { return runMove(it, line, prefix) }
+        NAMING_RE.matchEntire(op)?.let { return runNaming(it, line, prefix) }
+        return OpResult(log = "Step ${line.number} executed: ${substitute(op)}")
+    }
+
+    private fun runCommand(cmd: String, prefix: String): OpResult = when (cmd) {
+        "pause" -> OpResult(log = "${prefix}Command pause", newStatus = Status.PAUSED)
+        "resume" -> OpResult(log = "${prefix}Command resume", newStatus = Status.RUNNING)
+        "stop" -> OpResult(log = "${prefix}Command stop", newStatus = Status.FINISHED)
+        "reset" -> OpResult(log = "${prefix}Command reset")
+        "next" -> OpResult(log = "${prefix}Command 'next' is deprecated (no-op); use Step in UI")
+        "back" -> OpResult(log = "${prefix}Command 'back' is deprecated; use Step Back in UI")
+        else -> OpResult(log = "${prefix}unknown command")
+    }
+
+    // ---------- json:* ----------
+
+    private fun runJsonGet(m: MatchResult, prefix: String): OpResult {
+        val json = substitute(m.groupValues[1].trim())
+        val path = substitute(m.groupValues[2].trim())
+        val value = JsonParser.getCached(json, path)
+            ?: return OpResult(log = "${prefix}json:get '$path' not found", errorLine = currentStep)
+        results["json"] = value
+        return OpResult(log = "${prefix}json:get '$path' → '$value'")
+    }
+
+    private fun runJsonSet(m: MatchResult, prefix: String): OpResult {
+        val json = substitute(m.groupValues[1].trim())
+        val path = substitute(m.groupValues[2].trim())
+        val value = substitute(m.groupValues[3].trim())
+        val updated = JsonParser.setCached(json, path, value)
+        results["json"] = updated
+        return OpResult(log = "${prefix}json:set '$path' = '$value'")
+    }
+
+    private fun runJsonNames(m: MatchResult, prefix: String): OpResult {
+        val json = substitute(m.groupValues[1].trim())
+        val names = JsonParser.namesCached(json).joinToString(",")
+        results["json"] = names
+        return OpResult(log = "${prefix}json:names → '$names'")
+    }
+
+    private fun runJsonValues(m: MatchResult, prefix: String): OpResult {
+        val json = substitute(m.groupValues[1].trim())
+        val values = JsonParser.valuesCached(json).joinToString(",")
+        results["json"] = values
+        return OpResult(log = "${prefix}json:values → '$values'")
+    }
+
+    // ---------- data:* ----------
+
+    private fun runDataOp(m: MatchResult, line: Line, prefix: String): OpResult {
+        val dataExpr = m.groupValues[1].trim()
+        val axis = if (m.groupValues[2].isNotBlank()) m.groupValues[2][0] else 'x'
+        val extra = m.groupValues[3].trim()
+        val op = m.groupValues[4].trim()
+        val data = substitute(dataExpr)
+        val ax = if (op in setOf("push","pop","insert","remove","swap","set","length","deleteRange","replaceRange","sort","reverse","unique","join")) axis else 'x'
+        val args = if (extra.isBlank()) emptyList() else splitArgs(extra)
+
+        if (op == "length") {
+            val count = countAxis(data, ax).toString()
+            results["length"] = count
+            return OpResult(log = "${prefix}data:length ($ax) → $count")
+        }
+
+        val parts = splitBy(if (dataExpr.contains(":")) dataExpr.substringBefore(":") else dataExpr, data, ax)
+
+        return when (op) {
+            "join" -> {
+                val sep = args.getOrNull(0) ?: sepOf(ax)
+                val r = parts.joinToString(sep)
+                results["join"] = r
+                OpResult(log = "${prefix}data:join ($ax, '$sep') → '${r.take(40)}'")
+            }
+            "substring" -> {
+                val s = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val e = args.getOrNull(1)?.toIntOrNull() ?: data.length
+                val start = s.coerceIn(1, data.length + 1); val end = e.coerceIn(start - 1, data.length)
+                val sub = if (start <= end) data.substring(start - 1, end) else ""
+                results["substring"] = sub
+                OpResult(log = "${prefix}data:substring [$start..$end] → '${sub.take(40)}'")
+            }
+            "indexOf" -> {
+                val sub = args.getOrNull(0) ?: ""
+                if (parts.size > 1) {
+                    val idx = parts.indexOf(sub)
+                    results["indexOf"] = (if (idx >= 0) idx + 1 else -1).toString()
+                } else {
+                    val idx = data.indexOf(sub)
+                    results["indexOf"] = (if (idx >= 0) idx + 1 else -1).toString()
+                }
+                OpResult(log = "${prefix}data:indexOf '$sub' → ${results["indexOf"]}")
+            }
+            "replace" -> {
+                val old = args.getOrNull(0) ?: ""; val new = args.getOrNull(1) ?: ""
+                val r = if (old.isEmpty()) data else data.replace(old, new)
+                results["replace"] = r
+                OpResult(log = "${prefix}data:replace '$old'→'$new' → '${r.take(40)}'")
+            }
+            "lower" -> { val r = data.lowercase(); results["lower"] = r; OpResult(log = "${prefix}data:lower") }
+            "upper" -> { val r = data.uppercase(); results["upper"] = r; OpResult(log = "${prefix}data:upper") }
+            "trim"  -> { val r = data.trim(); results["trim"] = r; OpResult(log = "${prefix}data:trim") }
+            "chars" -> {
+                val sep = args.getOrNull(0) ?: ","
+                val r = buildString { data.forEachIndexed { i, c -> if (i > 0) append(sep); append(c) } }
+                results["chars"] = r
+                OpResult(log = "${prefix}data:chars → '$r'")
+            }
+            "charAt" -> {
+                val i = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val r = data.getOrNull(i - 1)?.toString() ?: ""
+                results["charAt"] = r
+                OpResult(log = "${prefix}data:charAt $i → '$r'")
+            }
+            "reverse" -> {
+                val r = buildString {
+                    for (i in parts.indices.reversed()) {
+                        if (i < parts.lastIndex) append(sepOf(ax))
+                        append(parts[i])
+                    }
+                }
+                results["reverse"] = r
+                OpResult(log = "${prefix}data:reverse ($ax) → '${r.take(40)}'")
+            }
+            "unique" -> {
+                val seen = mutableSetOf<String>()
+                val r = buildString {
+                    var first = true
+                    for (p in parts) {
+                        if (seen.add(p)) {
+                            if (!first) append(sepOf(ax))
+                            append(p); first = false
+                        }
+                    }
+                }
+                results["unique"] = r
+                OpResult(log = "${prefix}data:unique ($ax) → '${r.take(40)}'")
+            }
+            "contains" -> {
+                val v = args.getOrNull(0) ?: ""
+                results["contains"] = if (parts.contains(v)) "1" else "0"
+                OpResult(log = "${prefix}data:contains '$v' → ${results["contains"]}")
+            }
+            "slice" -> {
+                val from = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val to = args.getOrNull(1)?.toIntOrNull() ?: parts.size
+                val f = (from - 1).coerceIn(0, parts.size); val t = to.coerceIn(f, parts.size)
+                val sb = StringBuilder()
+                for (i in f until t) { if (i > f) sb.append(sepOf(ax)); sb.append(parts[i]) }
+                results["slice"] = sb.toString()
+                OpResult(log = "${prefix}data:slice $from..$to → '${sb.toString().take(40)}'")
+            }
+            "sort" -> {
+                val allNums = parts.all { it.toDoubleOrNull() != null } && parts.isNotEmpty()
+                val sorted = if (allNums) parts.sortedBy { it.toDouble() } else parts.sorted()
+                val sb = StringBuilder()
+                for (i in sorted.indices) { if (i > 0) sb.append(sepOf(ax)); sb.append(sorted[i]) }
+                results["sort"] = sb.toString()
+                OpResult(log = "${prefix}data:sort ($ax) → '${sb.toString().take(40)}'")
+            }
+            "push" -> {
+                val v = args.getOrNull(0) ?: ""
+                val r = if (data.isEmpty()) v else data + sepOf(ax) + v
+                results["push"] = r
+                OpResult(log = "${prefix}data:push $ax '$v' → '${r.take(40)}'")
+            }
+            "pop" -> {
+                if (parts.isEmpty()) { results["pop"] = ""; OpResult(log = "${prefix}data:pop empty") }
+                else {
+                    val last = parts.last()
+                    val rest = parts.dropLast(1).joinToString(sepOf(ax))
+                    results["pop"] = last; results["pop_rest"] = rest
+                    OpResult(log = "${prefix}data:pop → '${last.take(20)}'")
+                }
+            }
+            "insert" -> {
+                val i = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val v = args.getOrNull(1) ?: ""
+                val list = parts.toMutableList()
+                list.add((i - 1).coerceIn(0, list.size), v)
+                val sb = StringBuilder()
+                for (j in list.indices) { if (j > 0) sb.append(sepOf(ax)); sb.append(list[j]) }
+                results["insert"] = sb.toString()
+                OpResult(log = "${prefix}data:insert $i '$v'")
+            }
+            "remove" -> {
+                val i = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val list = parts.toMutableList(); val idx = i - 1
+                if (idx in list.indices) {
+                    val removed = list.removeAt(idx)
+                    val sb = StringBuilder()
+                    for (j in list.indices) { if (j > 0) sb.append(sepOf(ax)); sb.append(list[j]) }
+                    results["remove"] = removed; results["remove_rest"] = sb.toString()
+                    OpResult(log = "${prefix}data:remove $i → '${removed.take(20)}'")
+                } else OpResult(log = "${prefix}data:remove $i out of range", errorLine = line.number)
+            }
+            "swap" -> {
+                val i = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val j = args.getOrNull(1)?.toIntOrNull() ?: 1
+                val list = parts.toMutableList(); val a = i - 1; val b = j - 1
+                if (a in list.indices && b in list.indices) {
+                    val t = list[a]; list[a] = list[b]; list[b] = t
+                    val sb = StringBuilder()
+                    for (k in list.indices) { if (k > 0) sb.append(sepOf(ax)); sb.append(list[k]) }
+                    results["swap"] = sb.toString()
+                    OpResult(log = "${prefix}data:swap $i $j")
+                } else OpResult(log = "${prefix}data:swap out of range", errorLine = line.number)
+            }
+            "set" -> {
+                val i = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val v = args.getOrNull(1) ?: ""
+                val updated = fastSetAt(data, ax, i, v)
+                results["set"] = updated
+                OpResult(log = "${prefix}data:set $ax $i '$v'")
+            }
+            "deleteRange" -> {
+                val from = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val to = args.getOrNull(1)?.toIntOrNull() ?: from
+                val list = parts.toMutableList()
+                val range = (from - 1).coerceAtLeast(0)..(to - 1).coerceAtMost(list.size - 1)
+                if (range.first <= range.last) repeat(range.last - range.first + 1) { list.removeAt(range.first) }
+                val sb = StringBuilder()
+                for (k in list.indices) { if (k > 0) sb.append(sepOf(ax)); sb.append(list[k]) }
+                results["deleteRange"] = sb.toString()
+                OpResult(log = "${prefix}data:deleteRange $from..$to → '${sb.toString().take(40)}'")
+            }
+            "replaceRange" -> {
+                val from = args.getOrNull(0)?.toIntOrNull() ?: 1
+                val to = args.getOrNull(1)?.toIntOrNull() ?: from
+                val v = args.getOrNull(2) ?: ""
+                val list = parts.toMutableList()
+                val range = (from - 1).coerceAtLeast(0)..(to - 1).coerceAtMost(list.size - 1)
+                if (range.first <= range.last) {
+                    repeat(range.last - range.first + 1) { list.removeAt(range.first) }
+                    list.add(range.first.coerceIn(0, list.size), v)
+                }
+                val sb = StringBuilder()
+                for (k in list.indices) { if (k > 0) sb.append(sepOf(ax)); sb.append(list[k]) }
+                results["replaceRange"] = sb.toString()
+                OpResult(log = "${prefix}data:replaceRange $from..$to '$v'")
+            }
+            else -> OpResult(log = "${prefix}unknown data op: $op", errorLine = line.number)
+        }
+    }
+
+    private fun countAxis(value: String, axis: Char): Int = when (axis) {
+        'l' -> value.count { it == '\n' } + 1
+        'y' -> value.count { it == ',' } + 1
+        'z' -> value.count { it == ';' } + 1
+        'x' -> value.length
+        else -> 1
+    }
+
+    private fun fastSetAt(container: String, axis: Char, index: Int, newValue: String): String {
+        val sep = sepOf(axis)
+        if (sep.isEmpty()) return container
+        var count = 0; var start = -1; var end = -1; var pos = 0
+        while (pos <= container.length) {
+            val next = container.indexOf(sep, pos).let { if (it == -1) container.length else it }
+            count++
+            if (count == index) { start = pos; end = next; break }
+            pos = next + 1
+            if (next == container.length) break
+        }
+        if (start == -1) return container
+        return container.substring(0, start) + newValue + container.substring(end)
+    }
+
+    private fun splitArgs(s: String): List<String> =
+        s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+    private fun sepOf(axis: Char): String = when (axis) {
+        'l' -> "\n"; 'y' -> ","; 'z' -> ";"; 'x' -> ""; else -> ","
+    }
+
+    private fun runFilter(m: MatchResult, prefix: String): OpResult {
+        val data = substitute(m.groupValues[1].trim())
+        val cond = m.groupValues[2].trim()
+        val parts = data.split(",").map { it.trim() }
+        val sb = StringBuilder(); var first = true
+        for (item in parts) {
+            val oldIt = variables["it"]
+            variables["it"] = item
+            val ok = evalCondition(cond)
+            if (oldIt != null) variables["it"] = oldIt else variables.remove("it")
+            if (ok) { if (!first) sb.append(","); sb.append(item); first = false }
+        }
+        results["filter"] = sb.toString()
+        return OpResult(log = "${prefix}filter → '${sb.toString().take(40)}'")
+    }
+
+    private fun runMatches(m: MatchResult, prefix: String): OpResult {
+        val data = substitute(m.groupValues[1].trim())
+        val regex = m.groupValues[2].trim().toRegex()
+        val r = if (regex.matches(data)) "1" else "0"
+        results["matches"] = r
+        return OpResult(log = "${prefix}matches '$data' ~ '$regex' → $r")
+    }
+
+    private fun runForeach(m: MatchResult, line: Line, lines: List<Line>, prefix: String): OpResult {
+        val dataName = m.groupValues[1].trim()
+        val axes = m.groupValues[2].split(",").map { it.trim().first() }
+        val names = m.groupValues[3].split(",").map { it.trim() }
+        val bodyFirst = m.groupValues[4].trim()
+        val base = variables[dataName] ?: return OpResult(log = "${prefix}foreach: '$dataName' not found", errorLine = line.number)
+
+        val body = mutableListOf<String>()
+        if (bodyFirst.isNotBlank()) body += bodyFirst
+        var i = line.number
+        while (i < lines.size) {
+            val t = lines[i].text.trim()
+            if (t == "." || t.isEmpty()) break
+            if (!t.startsWith("\\")) body += t
+            i++
+        }
+
+        val lists = axes.map { splitBy(dataName, base, it) }
+        val result = StringBuilder()
+        val currentIndices = IntArray(axes.size) { 0 }
+
+        fun recurse(level: Int) {
+            if (level == axes.size) {
+                for ((idx, name) in names.withIndex()) {
+                    if (idx < axes.size) variables[name] = lists[idx][currentIndices[idx]]
+                }
+                for (instr in body) {
+                    val r = executeOperation(instr, line, lines, "")
+                    r.changed.forEach { (k, v) -> variables[k] = v }
+                    if (r.changed.containsKey("result")) result.append(variables["result"] ?: "")
+                }
+                return
+            }
+            for ((idx, item) in lists[level].withIndex()) {
+                currentIndices[level] = idx
+                recurse(level + 1)
+            }
+        }
+        recurse(0)
+        return OpResult(changed = mapOf("result" to result.toString()),
+            log = "${prefix}foreach ${lists.map { it.size }}")
+    }
+
+    private fun splitBy(name: String, value: String, axis: Char): List<String> {
+        splitters[name]?.get(axis)?.let { return value.split(it) }
+        return when (axis) {
+            'l' -> value.split("\n")
+            'x' -> if (value.isEmpty()) emptyList() else value.map { it.toString() }
+            'y' -> value.split(",")
+            'z' -> value.split(";")
+            else -> listOf(value)
+        }
+    }
+
+    // ---------- file:* (расширено: file:data, file:origin, file:lines) ----------
+
+    private fun runFile(m: MatchResult, prefix: String): OpResult {
+        val path = substitute(m.groupValues[1].trim())
+        val content = substitute(m.groupValues[2].trim())
+        val op = m.groupValues[3].trim()
+        return when (op) {
+            "create" -> OpResult(log = "${prefix}file:create → ${OsApi.fileCreate(path, content)}")
+            "update" -> OpResult(log = "${prefix}file:update → ${OsApi.fileUpdate(path, content)}")
+            "read" -> { val s = OsApi.fileRead(path); results["file"] = s; OpResult(log = "${prefix}file:read → ${s.length} chars") }
+            "delete" -> OpResult(log = "${prefix}file:delete → ${OsApi.fileDelete(path)}")
+            "list" -> { val s = OsApi.fileList(path); results["file"] = s; OpResult(log = "${prefix}file:list → $s") }
+            "exists" -> { val r = OsApi.fileExists(path); results["file"] = r.toString(); OpResult(log = "${prefix}file:exists → $r") }
+            // file:data — весь текст файла; если content непустой — перезаписать.
+            "data" -> {
+                if (content.isBlank()) {
+                    val s = OsApi.fileRead(path); results["file"] = s
+                    OpResult(log = "${prefix}file:data read '$path' → ${s.length} chars")
+                } else {
+                    val r = OsApi.fileUpdate(path, content); results["file"] = r.toString()
+                    OpResult(log = "${prefix}file:data write '$path' → $r")
+                }
+            }
+            // file:origin — оригинал файла рядом с .true, суффикс .orig; если content — перезапись.
+            "origin" -> {
+                val originPath = path + ".orig"
+                if (content.isBlank()) {
+                    val s = OsApi.fileRead(originPath); results["file"] = s
+                    OpResult(log = "${prefix}file:origin read '$originPath' → ${s.length} chars")
+                } else {
+                    val r = OsApi.fileUpdate(originPath, content); results["file"] = r.toString()
+                    OpResult(log = "${prefix}file:origin write '$originPath' → $r")
+                }
+            }
+            // file:lines — список строк через \n; если content = "N,newtext" — заменить N-ю строку.
+            "lines" -> {
+                val current = OsApi.fileRead(path)
+                if (content.isBlank()) {
+                    results["file"] = current
+                    OpResult(log = "${prefix}file:lines read '$path' → ${current.count { it == '\n' } + 1} lines")
+                } else {
+                    val parts = splitArgs(content)
+                    val idx = parts.getOrNull(0)?.toIntOrNull() ?: return OpResult(log = "${prefix}file:lines: bad index '$content'", errorLine = currentStep)
+                    val newLine = parts.getOrNull(1) ?: ""
+                    val lines = current.split("\n").toMutableList()
+                    if (idx in 1..lines.size) {
+                        lines[idx - 1] = newLine
+                        val updated = lines.joinToString("\n")
+                        val r = OsApi.fileUpdate(path, updated)
+                        results["file"] = r.toString()
+                        OpResult(log = "${prefix}file:lines '$path'[$idx] = '$newLine'")
+                    } else OpResult(log = "${prefix}file:lines: index $idx out of range", errorLine = currentStep)
+                }
+            }
+            else -> OpResult(log = "${prefix}unknown file op: $op", errorLine = currentStep)
+        }
+    }
+
+    private fun runApi(m: MatchResult, prefix: String): OpResult {
+        val url = substitute(m.groupValues[1].trim())
+        val data = substitute(m.groupValues[2].trim())
+        val op = m.groupValues[3].trim()
+        return when (op) {
+            "get" -> { val (_, s) = ServerApi.request("GET", url, null, emptyMap()); results["api"] = s; OpResult(log = "${prefix}api:get → ${s.length}") }
+            "post" -> { val (code, _) = ServerApi.request("POST", url, data, emptyMap()); val r = if (code in 200..299) 1 else -1; results["api"] = r.toString(); OpResult(log = "${prefix}api:post → $r") }
+            "put" -> { val (code, _) = ServerApi.request("PUT", url, data, emptyMap()); val r = if (code in 200..299) 1 else -1; results["api"] = r.toString(); OpResult(log = "${prefix}api:put → $r") }
+            "delete" -> { val (code, _) = ServerApi.request("DELETE", url, null, emptyMap()); val r = if (code in 200..299) 1 else -1; results["api"] = r.toString(); OpResult(log = "${prefix}api:delete → $r") }
+            "patch" -> { val (code, _) = ServerApi.request("PATCH", url, data, emptyMap()); val r = if (code in 200..299) 1 else -1; results["api"] = r.toString(); OpResult(log = "${prefix}api:patch → $r") }
+            else -> OpResult(log = "${prefix}unknown api op: $op", errorLine = currentStep)
+        }
+    }
+
+    private fun runApiWs(m: MatchResult, prefix: String): OpResult {
+        val url = substitute(m.groupValues[1].trim())
+        try { webSockets[url]?.close() } catch (_: Exception) {}
+        val handle = ServerApi.websocket(url) { msg -> results["ws"] = msg }
+        webSockets[url] = handle
+        return OpResult(log = "${prefix}api:websocket '$url' connected")
+    }
+
+    private fun runConsole(m: MatchResult, prefix: String): OpResult {
+        val cmd = substitute(m.groupValues[1].trim())
+        val r = OsApi.console(cmd)
+        results["console"] = r.stdout.ifBlank { r.stderr }
+        return OpResult(log = "${prefix}console exit=${r.exitCode}")
+    }
+
+    private fun runProgram(m: MatchResult, prefix: String): OpResult {
+        val path = substitute(m.groupValues[1].trim())
+        val flags = m.groupValues[2].trim().ifBlank { null }
+        val r = OsApi.run(path, flags)
+        results["run"] = r.stdout.ifBlank { r.stderr }
+        return OpResult(log = "${prefix}run exit=${r.exitCode}")
+    }
+
+    private fun runSave(m: MatchResult, prefix: String): OpResult {
+        val path = substitute(m.groupValues[1].trim())
+        val data = substitute(m.groupValues[2].trim())
+        val (code, _) = ServerApi.request("POST", path, data, emptyMap())
+        val r = if (code in 200..299) 1 else -1
+        results["save"] = r.toString()
+        return OpResult(log = "${prefix}save → $r")
+    }
+
+    private fun runLoad(m: MatchResult, prefix: String): OpResult {
+        val path = substitute(m.groupValues[1].trim())
+        val query = m.groupValues[2].trim()
+        val (_, s) = ServerApi.request("GET", if (query.isBlank()) path else "$path?$query", null, emptyMap())
+        results["load"] = s
+        return OpResult(log = "${prefix}load → ${s.length} chars")
+    }
+
+    // ---------- math ----------
+
+    private fun runMathChain(m: MatchResult, line: Line, prefix: String): OpResult {
+        val expr = substitute(m.groupValues[1].trim())
+        val value = evaluateMath(expr)
+        val dst = m.groupValues[2].trim()
+        val path = parsePath(dst)
+        if (path != null) {
+            val (name, axes) = path
+            if (name in constants) return OpResult(log = "${prefix}Cannot write to constant '$name'", errorLine = line.number)
+            val updated = setAt(variables[name] ?: "", axes, value, true)
+            variables[name] = updated
+            invalidateSubstituteCache()
+            return OpResult(changed = mapOf(name to updated), log = "${prefix}math: $expr = $value → $dst")
+        }
+        if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = line.number)
+        variables[dst] = value
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to value), log = "${prefix}math: $expr = $value → $dst")
+    }
+
+    private fun runMathNamed(m: MatchResult, prefix: String): OpResult {
+        val expr = substitute(m.groupValues[1].trim())
+        val op = m.groupValues[2].trim()
+        val sep = detectSeparator(expr)
+        val items = expr.split(sep).map { it.trim() }.filter { it.isNotEmpty() }
+        val result = applyListOp(op, items, sep)
+        results["math"] = result
+        return OpResult(log = "${prefix}math:$op → $result")
+    }
+
+    private fun applyListOp(op: String, items: List<String>, sep: String): String {
+        val nums = items.mapNotNull { it.toDoubleOrNull() }
+        val allNums = nums.size == items.size && items.isNotEmpty()
+        return when (op) {
+            "sum" -> formatNumber(nums.sum())
+            "min" -> if (nums.isEmpty()) "" else formatNumber(nums.min())
+            "max" -> if (nums.isEmpty()) "" else formatNumber(nums.max())
+            "avg" -> if (nums.isEmpty()) "" else formatNumber(nums.average())
+            "product" -> if (nums.isEmpty()) "" else formatNumber(nums.fold(1.0) { a, b -> a * b })
+            "count" -> items.size.toString()
+            "sort" -> if (allNums) nums.sorted().joinToString(sep) { formatNumber(it) } else items.sorted().joinToString(sep)
+            else -> items.joinToString(sep)
+        }
+    }
+
+    private fun runMath(m: MatchResult, line: Line, prefix: String): OpResult {
+        val expr = substitute(m.groupValues[1].trim())
+        val value = evaluateMath(expr)
+        results["math"] = value
+        return OpResult(log = "${prefix}math: $expr = $value")
+    }
+
+    private fun runSize(m: MatchResult, line: Line, prefix: String): OpResult {
+        val raw = substitute(m.groupValues[1].trim())
+        val len = raw.length.toString()
+        results["size"] = len
+        return OpResult(log = "${prefix}size (x): '$raw' = $len")
+    }
+
+    private fun runSizeAxis(m: MatchResult, line: Line, prefix: String): OpResult {
+        val raw = substitute(m.groupValues[1].trim())
+        val axis = m.groupValues[2][0]
+        val len = countAxis(raw, axis).toString()
+        results["size"] = len
+        return OpResult(log = "${prefix}size ($axis): $len element(s)")
+    }
+
+    // ---------- naming / move ----------
+
+    private fun runNaming(m: MatchResult, line: Line, prefix: String): OpResult {
+        val rawValue = m.groupValues[1].trim()
+        val name = m.groupValues[2].trim()
+        val flags = m.groupValues[3]
+        val hidden = flags.contains("*"); val isConst = flags.contains("@")
+        val value = substitute(rawValue)
+        if (name.isEmpty()) return OpResult(log = "${prefix}Naming: empty name", errorLine = line.number)
+        val path = parsePath(name)
+        if (path != null) {
+            val (base, axes) = path
+            if (base in constants) return OpResult(log = "${prefix}Cannot write to constant '$base'", errorLine = line.number)
+            val updated = setAt(variables[base] ?: "", axes, value, true)
+            variables[base] = updated
+            invalidateSubstituteCache()
+            return OpResult(changed = mapOf(base to updated), log = "${prefix}Named element '$value' at $name")
+        }
+        if (name in constants) return OpResult(log = "${prefix}Cannot overwrite constant '$name'", errorLine = line.number)
+        variables[name] = value
+        if (isConst) constants += name
+        if (hidden) hiddenVariables += name else hiddenVariables -= name
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(name to value),
+            log = "${prefix}Named '$value' as '$name'${if (isConst) " (const)" else ""}${if (hidden) " (hidden)" else ""}")
+    }
+
+    private fun runMove(m: MatchResult, line: Line, prefix: String): OpResult {
+        val lhs = m.groupValues[1].trim()
+        val dst = m.groupValues[2].trim()
+        val lhsPath = parsePath(lhs)
+        if (lhsPath != null) {
+            val (name, path) = lhsPath
+            if (name in constants) return OpResult(log = "${prefix}Cannot move from constant '$name'", errorLine = line.number)
+            val container = variables[name] ?: return OpResult(log = "${prefix}Move: '$name' not found", errorLine = line.number)
+            val (picked, remainder) = extractAt(container, path) ?: return OpResult(log = "${prefix}Move: bad path $lhs", errorLine = line.number)
+            variables[name] = remainder
+            val dstPath = parsePath(dst)
+            if (dstPath != null) {
+                val (dn, dp) = dstPath
+                if (dn in constants) return OpResult(log = "${prefix}Cannot move into constant '$dn'", errorLine = line.number)
+                variables[dn] = setAt(variables[dn] ?: "", dp, picked, true)
+            } else {
+                if (dst in constants) return OpResult(log = "${prefix}Cannot move into constant '$dst'", errorLine = line.number)
+                variables[dst] = picked
+            }
+            invalidateSubstituteCache()
+            return OpResult(changed = mapOf(dst to picked, name to remainder),
+                log = "${prefix}Moved element '$picked' from $lhs → $dst")
+        }
+        val src = substitute(lhs)
+        if (src.isEmpty()) return OpResult(log = "${prefix}Move: empty source")
+        if (lhs in constants) return OpResult(log = "${prefix}Cannot move from constant '$lhs'", errorLine = line.number)
+        if (dst in constants) return OpResult(log = "${prefix}Cannot move into constant '$dst'", errorLine = line.number)
+        variables[dst] = src
+        variables.remove(lhs)
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to src), removed = listOf(lhs), log = "${prefix}Moved '$src' → $dst")
+    }
+
+    // ---------- log ----------
+
+    private fun runLogGet(m: MatchResult, prefix: String): OpResult {
+        val src = m.groupValues[1].trim(); val dst = m.groupValues[2].trim()
+        val value = readLogSource(src) ?: return OpResult(log = "${prefix}Log read failed", errorLine = currentStep)
+        if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = currentStep)
+        variables[dst] = value
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to value), log = "${prefix}Log → $dst")
+    }
+
+    private fun runLogMove(m: MatchResult, prefix: String): OpResult {
+        val dst = m.groupValues[1].trim()
+        if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = currentStep)
+        val joined = log.joinToString("\n") { it.text }
+        log = emptyList()
+        variables[dst] = joined
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to joined), log = "${prefix}Log -> $dst")
+    }
+
+    private fun readLogSource(src: String): String? {
+        if (src == "log") return log.joinToString("\n") { it.text }
+        if (src == "log:type") return log.map { it.type }.distinct().joinToString(",")
+        val m = Regex("""^log:l:(first|last|\d+)$""").matchEntire(src) ?: return null
+        val idxStr = m.groupValues[1]
+        val idx = when (idxStr) { "first" -> 1; "last" -> log.size; else -> idxStr.toIntOrNull() ?: 0 }
+        return log.getOrNull(idx - 1)?.text ?: ""
+    }
+
+    // ---------- substitute ----------
+
+    fun substitute(input: String): String {
+        var result = substituteIndexed(input)
+        result = substituteDollar(result)
+        var depth = 0
+        while (depth < 10) {
+            val replaced = substituteFast(result)
+            if (replaced == result) break
+            result = replaced
+            depth++
+        }
+        return result
+    }
+
+    private fun substituteFast(input: String): String {
+        if (variables.isEmpty()) return input
+        val combined = getCombinedRegex() ?: return input
+        var any = false
+        for (name in variables.keys) if (name.isNotEmpty() && input.contains(name)) { any = true; break }
+        if (!any) return input
+        return combined.replace(input) { m ->
+            val name = m.groupValues[1]
+            variables[name] ?: name
+        }
+    }
+
+    private fun substituteIndexed(input: String): String {
+        if (!input.contains(':')) return input
+        return INDEX_RE.replace(input) { m ->
+            val name = m.groupValues[1]; val pathStr = m.groupValues[2]
+            if (name == "log") readLogSource("log$pathStr") ?: m.value
+            else {
+                val base = variables[name] ?: return@replace m.value
+                val axes = parseAxes(pathStr)
+                indexAt(base, axes, name) ?: m.value
+            }
+        }
+    }
+
+    private fun substituteDollar(input: String): String {
+        if (!input.contains('$')) return input
+        return DOLLAR_RE.replace(input) { m ->
+            val left = variables[m.groupValues[1]] ?: m.groupValues[1]
+            val right = variables[m.groupValues[2]] ?: results[m.groupValues[2]] ?: m.groupValues[2]
+            left + right
+        }
+    }
+
+    private fun evalCondition(cond: String): Boolean {
+        val c = substitute(cond).trim()
+        OR_RE.split(c, 2).let { if (it.size == 2) return evalCondition(it[0]) || evalCondition(it[1]) }
+        AND_RE.split(c, 2).let { if (it.size == 2) return evalCondition(it[0]) && evalCondition(it[1]) }
+        if (c.startsWith("!")) return !evalCondition(c.substring(1))
+        for (op in BINARY_OPS) {
+            val idx = c.indexOf(op)
+            if (idx > 0) return compare(c.substring(0, idx).trim(), c.substring(idx + op.length).trim(), op)
+        }
+        return c.toBooleanStrictOrNull() ?: c.isNotEmpty()
+    }
+
+    private fun compare(l: String, r: String, op: String): Boolean {
+        val ln = l.toDoubleOrNull(); val rn = r.toDoubleOrNull()
+        val cmp = if (ln != null && rn != null) ln.compareTo(rn) else l.compareTo(r)
+        return when (op) {
+            "==" -> cmp == 0; "!=" -> cmp != 0
+            "<" -> cmp < 0; ">" -> cmp > 0
+            "<=" -> cmp <= 0; ">=" -> cmp >= 0
+            else -> false
+        }
+    }
+
+    private fun evaluateMath(expr: String): String {
+        val hasNames = variables.keys.any { it.isNotEmpty() && expr.contains(it) }
+        if (!hasNames) {
+            mathResultCache[expr]?.let { return it }
+            val r = evaluateMathUncached(expr)
+            if (mathResultCache.size > 500) mathResultCache.clear()
+            mathResultCache[expr] = r
+            return r
+        }
+        return evaluateMathUncached(expr)
+    }
+
+    private fun evaluateMathUncached(expr: String): String {
+        val t = expr.trim()
+        if (t.contains("||")) return if (t.split("||").any { evaluateMathUncached(it).trim() == "1" }) "1" else "0"
+        if (t.contains("&&")) return if (t.split("&&").all { evaluateMathUncached(it).trim() == "1" }) "1" else "0"
+        if (t.startsWith("!")) return if (evaluateMathUncached(t.substring(1)).trim() == "1") "0" else "1"
+        for (op in BINARY_OPS) {
+            val idx = t.indexOf(op)
+            if (idx > 0) return if (compare(t.substring(0, idx).trim(), t.substring(idx + op.length).trim(), op)) "1" else "0"
+        }
+        val rpn = rpnCache.getOrPut(t) {
+            try { toRpn(tokenizeMath(t)) } catch (e: Exception) { emptyList() }
+        }
+        if (rpn.isEmpty()) return t
+        return try { formatNumber(evalRpn(rpn)) } catch (e: Exception) { t }
+    }
+
+    private fun tokenizeMath(input: String): List<String> {
+        val out = mutableListOf<String>(); var i = 0
+        while (i < input.length) {
+            val c = input[i]
+            when {
+                c.isWhitespace() -> i++
+                c.isDigit() || (c == '.' && i + 1 < input.length && input[i + 1].isDigit()) -> {
+                    val s = i; while (i < input.length && (input[i].isDigit() || input[i] == '.')) i++
+                    out += input.substring(s, i)
+                }
+                c.isLetter() -> {
+                    val s = i; while (i < input.length && (input[i].isLetter() || input[i] == '_')) i++
+                    out += input.substring(s, i).lowercase()
+                }
+                input.startsWith("**", i) -> { out += "**"; i += 2 }
+                input.startsWith("//", i) -> { out += "//"; i += 2 }
+                input.startsWith("<<", i) -> { out += "<<"; i += 2 }
+                input.startsWith(">>", i) -> { out += ">>"; i += 2 }
+                c in "+-*/%(),&|^~" -> { out += c.toString(); i++ }
+                else -> { out += c.toString(); i++ }
+            }
+        }
+        return out
+    }
+
+    private fun toRpn(tokens: List<String>): List<String> {
+        val prec = mapOf("**" to 5, "*" to 4, "/" to 4, "//" to 4, "%" to 4, "+" to 3, "-" to 3,
+            "<<" to 2, ">>" to 2, "&" to 1, "|" to 1, "^" to 0, "u-" to 6, "u+" to 6, "u~" to 6)
+        val rightAssoc = setOf("**", "u-", "u+", "u~")
+        val out = mutableListOf<String>(); val stack = ArrayDeque<String>(); var prev: String? = null
+        for (t in tokens) {
+            when {
+                t.toDoubleOrNull() != null -> out += t
+                t in FUNCS -> stack.addFirst(t)
+                t == "(" -> stack.addFirst(t)
+                t == ")" -> {
+                    while (stack.isNotEmpty() && stack.first() != "(") out += stack.removeFirst()
+                    if (stack.isNotEmpty()) stack.removeFirst()
+                    while (stack.isNotEmpty() && stack.first() in FUNCS) out += stack.removeFirst()
+                }
+                t in prec -> {
+                    val op = if ((t == "-" || t == "+" || t == "~") && (prev == null || prev in prec || prev == "(" || prev == ",")) "u$t" else t
+                    val p = prec[op] ?: 0
+                    while (stack.isNotEmpty() && stack.first() !in FUNCS && stack.first() != "(" &&
+                        stack.first() != "," && ((prec[stack.first()] ?: 0) > p ||
+                                ((prec[stack.first()] ?: 0) == p && op !in rightAssoc))) out += stack.removeFirst()
+                    stack.addFirst(op)
+                }
+                t == "," -> while (stack.isNotEmpty() && stack.first() != "(") out += stack.removeFirst()
+                else -> throw IllegalArgumentException("bad token $t")
+            }
+            prev = t
+        }
+        while (stack.isNotEmpty()) out += stack.removeFirst()
+        return out
+    }
+
+    private fun evalRpn(rpn: List<String>): Double {
+        val st = ArrayDeque<Double>()
+        for (t in rpn) when {
+            t.toDoubleOrNull() != null -> st.addFirst(t.toDouble())
+            t == "u-" -> st.addFirst(-st.removeFirst())
+            t == "u+" -> {}
+            t == "u~" -> {
+                val v = st.removeFirst().toLong()
+                st.addFirst(v.inv().toDouble())
+            }
+            t in BIN_OPS -> { val b = st.removeFirst(); val a = st.removeFirst(); st.addFirst(applyBin(a, b, t)) }
+            t in FUNCS -> {
+                val n = FUNC_ARITY[t] ?: 1
+                val args = (1..n).map { st.removeFirst() }.reversed()
+                st.addFirst(applyFunc(t, args))
+            }
+        }
+        return st.firstOrNull() ?: 0.0
+    }
+
+    private fun applyBin(a: Double, b: Double, op: String): Double = when (op) {
+        "+" -> a + b; "-" -> a - b; "*" -> a * b
+        "/" -> if (b != 0.0) a / b else 0.0
+        "//" -> if (b != 0.0) Math.floor(a / b) else 0.0
+        "%" -> if (b != 0.0) a % b else 0.0
+        "**" -> Math.pow(a, b)
+        "<<" -> (a.toLong() shl b.toInt()).toDouble()
+        ">>" -> (a.toLong() shr b.toInt()).toDouble()
+        "&" -> (a.toLong() and b.toLong()).toDouble()
+        "|" -> (a.toLong() or b.toLong()).toDouble()
+        "^" -> (a.toLong() xor b.toLong()).toDouble()
+        else -> 0.0
+    }
+
+    private fun applyFunc(name: String, args: List<Double>): Double = when (name) {
+        "abs" -> Math.abs(args[0])
+        "min" -> Math.min(args[0], args[1])
+        "max" -> Math.max(args[0], args[1])
+        "round" -> Math.round(args[0]).toDouble()
+        "floor" -> Math.floor(args[0])
+        "ceil" -> Math.ceil(args[0])
+        "sqrt" -> Math.sqrt(args[0])
+        "pow" -> Math.pow(args[0], args[1])
+        "popcount" -> Long.bitCount(args[0].toLong()).toDouble()
+        "clz" -> Long.numberOfLeadingZeros(args[0].toLong()).toDouble()
+        "ctz" -> Long.numberOfTrailingZeros(args[0].toLong()).toDouble()
+        else -> 0.0
+    }
+
+    private fun formatNumber(d: Double): String =
+        if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
+
+    // ---------- indexing ----------
+
+    private fun parsePath(atom: String): Pair<String, List<AxisIdx>>? {
+        val m = PATH_RE.matchEntire(atom) ?: return null
+        val name = m.groupValues[1]; val axesStr = m.groupValues[2]
+        if (axesStr.isBlank()) return null
+        return name to parseAxes(axesStr)
+    }
+
+    private data class AxisIdx(val axis: Char, val idx: Int, val name: String? = null)
+
+    private fun parseAxes(s: String): List<AxisIdx> {
+        val out = mutableListOf<AxisIdx>()
+        val re = Regex(""":([lxyz]):(first|last|\d+|[A-Za-z_]\w*)""")
+        for (m in re.findAll(s)) {
+            val axis = m.groupValues[1][0]; val v = m.groupValues[2]
+            val (idx, name) = when {
+                v == "first" -> -1 to null
+                v == "last" -> -2 to null
+                v.toIntOrNull() != null -> v.toInt() to null
+                else -> -3 to v
+            }
+            out += AxisIdx(axis, idx, name)
+        }
+        return out
+    }
+
+    private fun normalize(a: AxisIdx, size: Int): Int = when {
+        a.idx == -1 -> 1; a.idx == -2 -> size
+        a.idx == -3 -> (variables[a.name] ?: "").toIntOrNull() ?: 1
+        else -> a.idx
+    }
+
+    private fun indexAt(value: String, axes: List<AxisIdx>, name: String): String? {
+        var current = value
+        for (a in axes) {
+            val parts = splitBy(name, current, a.axis)
+            val real = normalize(a, parts.size); val i = real - 1
+            if (i !in parts.indices) return ""
+            current = parts[i]
+        }
+        return current
+    }
+
+    private fun setAt(container: String, axes: List<AxisIdx>, newValue: String, autoCreate: Boolean): String {
+        if (axes.isEmpty()) return newValue
+        val head = axes.first(); val tail = axes.drop(1)
+        if (head.axis == 'x') {
+            val parts = if (container.isEmpty() && autoCreate) mutableListOf() else container.map { it.toString() }.toMutableList()
+            val real = normalize(head, parts.size); val i = real - 1
+            if (autoCreate) while (parts.size <= i) parts += ""
+            if (i !in parts.indices) return container
+            parts[i] = if (tail.isEmpty()) newValue else setAt(parts[i], tail, newValue, autoCreate)
+            return parts.joinToString("")
+        }
+        val sep = sepOf(head.axis)
+        val parts = if (container.isEmpty() && autoCreate) mutableListOf() else container.split(sep).toMutableList()
+        val real = normalize(head, parts.size); val i = real - 1
+        if (autoCreate) while (parts.size <= i) parts += ""
+        if (i !in parts.indices) return container
+        parts[i] = if (tail.isEmpty()) newValue else setAt(parts[i], tail, newValue, autoCreate)
+        return parts.joinToString(sep)
+    }
+
+    private fun extractAt(container: String, axes: List<AxisIdx>): Pair<String, String>? {
+        if (axes.isEmpty()) return null
+        val head = axes.first(); val tail = axes.drop(1)
+        val sep = sepOf(head.axis)
+        val parts = if (head.axis == 'x') container.map { it.toString() }.toMutableList() else container.split(sep).toMutableList()
+        val real = normalize(head, parts.size); val i = real - 1
+        if (i !in parts.indices) return null
+        return if (tail.isEmpty()) {
+            val picked = parts.removeAt(i)
+            val rem = if (head.axis == 'x') parts.joinToString("") else parts.joinToString(sep)
+            picked to rem
+        } else {
+            val sub = extractAt(parts[i], tail) ?: return null
+            parts[i] = sub.second
+            val rem = if (head.axis == 'x') parts.joinToString("") else parts.joinToString(sep)
+            sub.first to rem
+        }
+    }
+
+    private fun resolveTarget(target: String, lines: List<Line>): Int {
+        if (target.startsWith("step:")) return target.removePrefix("step:").toIntOrNull()?.coerceIn(1, lines.size) ?: 1
+        for (l in lines) LABEL_RE.find(l.text.trim())?.let { if (it.groupValues[1] == target) return l.number }
+        return currentStep
+    }
+
+    private fun saveSnapshot() {
+        val splittersCopy = LinkedHashMap<String, Map<Char, String>>()
+        for ((k, v) in splitters) splittersCopy[k] = LinkedHashMap(v)
+        history.addLast(Snapshot(
+            currentStep,
+            LinkedHashMap(variables),
+            LinkedHashSet(hiddenVariables),
+            LinkedHashMap(results),
+            LinkedHashSet(constants),
+            splittersCopy,
+            ArrayList(log),
+            status,
+            returnValue,
+            hasReturn
+        ))
+        while (history.size > historyLimit) history.removeFirst()
+    }
+
+    fun executeStepBack(): StepResult? {
+        val snap = history.removeLastOrNull() ?: return null
+        currentStep = snap.currentStep
+        variables.clear(); variables.putAll(snap.variables)
+        hiddenVariables.clear(); hiddenVariables.addAll(snap.hidden)
+        results.clear(); results.putAll(snap.results)
+        constants.clear(); constants.addAll(snap.constants)
+        splitters.clear()
+        for ((k, v) in snap.splitters) splitters[k] = LinkedHashMap(v)
+        log = snap.log
+        returnValue = snap.returnValue
+        hasReturn = snap.hasReturn
+        setStatus(snap.status)
+        invalidateSubstituteCache()
+        return StepResult(currentStep, LinkedHashMap(variables), emptyList(),
+            "Step back → step $currentStep", status)
+    }
+
+    fun reset() {
+        currentStep = 1; setStatus(Status.STOPPED)
+        variables.clear(); hiddenVariables.clear(); results.clear(); constants.clear(); splitters.clear()
+        try { webSockets.values.forEach { it.close() } } catch (_: Exception) {}
+        webSockets.clear()
+        log = emptyList(); returnValue = null; hasReturn = false; history.clear()
+        nameRegexCache.clear(); rpnCache.clear(); mathResultCache.clear(); invalidateSubstituteCache()
+    }
+
+    fun appendLog(text: String, type: String = "info", lineNumber: Int? = null) {
+        log = listOf(LogEntry(text, type, lineNumber)) + log
+    }
+
+    fun logSnapshot(): List<LogEntry> = log
+
+    private fun findUnescaped(s: String, ch: Char): Int {
+        var i = 0
+        while (i < s.length) {
+            if (s[i] == '\\') { i += 2; continue }
+            if (s[i] == ch) return i
+            i++
+        }
+        return -1
+    }
+
+    private fun detectSeparator(expr: String): String =
+        when { expr.contains(";") -> ";"; expr.contains(".") -> "."; else -> "," }
+
+    companion object {
+        private val LABEL_RE = Regex("""^=\s*(\S+)\s*$""")
+        private val JUMP_RE = Regex("""^\^\s*(\S+)\s*$""")
+        private val COMMAND_RE = Regex("""^=>\s*(pause|resume|stop|reset|next|back)\s*$""")
+        private val ATOM = """[A-Za-z_]\w*(?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))*"""
+        private val LOG_SRC = """log(?::type|:l:(?:first|last|\d+))?"""
+        private val JSON_GET_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*json:get\s*$""")
+        private val JSON_SET_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*=>\s*json:set\s*$""")
+        private val JSON_NAMES_RE = Regex("""^(.+?)\s*=>\s*json:names\s*$""")
+        private val JSON_VALUES_RE = Regex("""^(.+?)\s*=>\s*json:values\s*$""")
+        private val DATA_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.*?)\s*=>\s*data:(\w+)\s*$""")
+        private val FILTER_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*filter\s*$""")
+        private val MATCHES_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*matches\s*$""")
+        private val FOREACH_RE = Regex("""^([A-Za-z_]\w*):foreach:([lxyz](?:\s*,\s*[lxyz])*)\s*;\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:\s*(.*)$""")
+        private val MOVE_RE = Regex("""^($ATOM)\s*->\s*($ATOM)\s*$""")
+        private val LOG_GET_RE = Regex("""^($LOG_SRC)\s*=>\s*($ATOM)\s*$""")
+        private val LOG_MOVE_RE = Regex("""^log\s*->\s*($ATOM)\s*$""")
+        private val MATH_CHAIN_RE = Regex("""^(.+?)\s*=>\s*math\s*=>\s*($ATOM)\s*$""")
+        private val MATH_NAMED_RE = Regex("""^(.+?)\s*=>\s*math:(\w+)\s*$""")
+        private val MATH_RE = Regex("""^(.+?)\s*=>\s*math\s*$""")
+        private val SIZE_AXIS_RE = Regex("""^(.+?)\s*=>\s*size:([lxyz])\s*$""")
+        private val SIZE_RE = Regex("""^(.+?)\s*=>\s*size\s*$""")
+        private val NAMING_RE = Regex("""^(.+?)\s*(?<!\\)=\s*($ATOM)\s*([*@]+)?\s*$""")
+        private val PATH_RE = Regex("""^([A-Za-z_]\w*)((?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))+)$""")
+        private val INDEX_RE = Regex("""\b([A-Za-z_]\w*)((?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))+)\b""")
+        private val SPLITTER_RE = Regex("""^\.\s*=>\s*([A-Za-z_]\w*):splitter:([lxyz])\s*:\s*(\S+)\s*$""")
+        private val CONSOLE_RE = Regex("""^(.+?)\s*=>\s*console\s*$""")
+        private val RUN_RE = Regex("""^(.+?)(?:\s*,\s*(.+?))?\s*=>\s*run\s*$""")
+        private val FILE_RE = Regex("""^(.+?)(?:\s*,\s*(.+?))?\s*=>\s*file:(\w+)\s*$""")
+        private val API_WS_RE = Regex("""^(.+?)\s*=>\s*api:websocket\s*$""")
+        private val API_RE = Regex("""^(.+?)(?:\s*,\s*(.+?))?\s*=>\s*api:(\w+)\s*$""")
+        private val SAVE_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*save\s*$""")
+        private val LOAD_RE = Regex("""^(.+?)(?:\s*,\s*(.+?))?\s*=>\s*load\s*$""")
+        private val DOLLAR_RE = Regex("""([A-Za-z_]\w*)\$([A-Za-z_]\w*)""")
+        private val FUNC_RETURN_RE = Regex("""^:([A-Za-z_]\w*)\s*$""")
+        private val RETURN_RE = Regex("""^(.+?)\s*=>\s*return\s*$""")
+        private val ACTIVE_TAB_RE = Regex("""^(\S+)(?:\s*,\s*(\S+))?\s*=>\s*activeTab\s*$""")
+        private val FUNC_CALL_LOCAL_RE = Regex("""^(.+?)\s*=>\s*\.:([A-Za-z_]\w*):([A-Za-z_]\w*)\s*$""")
+        private val FUNC_CALL_COPY_RE = Regex("""^(.+?)\s*=>\s*([A-Za-z_]\w*):([A-Za-z_]\w*)\s*$""")
+        private val TAB_CALL_RE = Regex("""^(.+?)\s*=>\s*([A-Za-z_]\w*)\s*$""")
+        private val TAB_CALL_ASYNC_RE = Regex("""^(.+?)\s*=>\s*([A-Za-z_]\w*!)\s*$""")
+        private val OR_RE = Regex("""\s*\|\|\s*""")
+        private val AND_RE = Regex("""\s*&&\s*""")
+        private val BINARY_OPS = listOf("==", "!=", "<=", ">=", "<", ">")
+        private val BIN_OPS = setOf("+", "-", "*", "/", "//", "%", "**", "<<", ">>", "&", "|", "^")
+        private val FUNCS = setOf("abs", "min", "max", "round", "floor", "ceil", "sqrt", "pow", "popcount", "clz", "ctz")
+        private val FUNC_ARITY = mapOf(
+            "abs" to 1, "round" to 1, "floor" to 1, "ceil" to 1, "sqrt" to 1,
+            "popcount" to 1, "clz" to 1, "ctz" to 1,
+            "min" to 2, "max" to 2, "pow" to 2
+        )
+    }
+}
