@@ -1,15 +1,12 @@
 package be.simple
 
+import be.`true`.AgentAction
+import be.`true`.Interpreter
 import be.`true`.Status
 import be.`true`.StepResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainScreenApp {
     var initialized = false
-    private val asyncScope = CoroutineScope(Dispatchers.Default)
     private var sys: MainScreenSystem? = null
 
     fun attachSystem(system: MainScreenSystem) { sys = system }
@@ -17,7 +14,12 @@ class MainScreenApp {
     fun fileName(): String = activeTab()?.fileName ?: ""
     fun code(): String = activeTab()?.code ?: ""
 
-    fun newInterpreter(): be.`true`.Interpreter = be.`true`.Interpreter(
+    fun viewingAgent(): AgentState? {
+        val id = Substrate.viewingAgentId ?: return null
+        return AgentsModel.byId(id)
+    }
+
+    fun newInterpreter(callerAgentId: Int = -1): Interpreter = Interpreter(
         tabCaller = { name, data -> callTab(name, data) },
         tabCallerAsync = { name, data -> callTabAsync(name, data) { r -> onAsyncDone(name, r) } },
         tabExists = { name -> TabsModel.tabs.any { it.fileName.removeSuffix(".true") == name } },
@@ -25,27 +27,42 @@ class MainScreenApp {
         funcExists = { src, fn ->
             val tab = TabsModel.active() ?: return@Interpreter false
             InterpreterCompat.collectFunctions(tab.code).any { it.source == src && it.name == fn }
-        }
+        },
+        agentCaller = { callerId, name, action, arg -> callAgent(callerId, name, action, arg) },
+        callerAgentId = callerAgentId
     )
+
+    private fun callAgent(callerId: Int, name: String, action: AgentAction, arg: String?) {
+        sys?.controlAgent(callerId, name, action, arg)
+    }
 
     fun ensureMainTab() {
         if (TabsModel.tabs.isEmpty()) {
-            TabsModel.create("main.true", Substrate.DEFAULT_CODE, interpreter = newInterpreter())
+            val interp = newInterpreter()
+            TabsModel.create("main.true", Substrate.DEFAULT_CODE, interpreter = interp)
+            ensureAgentFor("main.true")
         }
         publishActive()
     }
 
     fun newTab() {
         val n = TabsModel.tabs.size + 1
-        TabsModel.create("tab$n.true", Substrate.DEFAULT_CODE, interpreter = newInterpreter())
+        val interp = newInterpreter()
+        TabsModel.create("tab$n.true", Substrate.DEFAULT_CODE, interpreter = interp)
+        ensureAgentFor("tab$n.true")
         publishActive()
     }
 
-    fun openTab(name: String, code: String) { TabsModel.open(name, code, newInterpreter()); publishActive() }
+    fun openTab(name: String, code: String) {
+        val interp = newInterpreter()
+        TabsModel.open(name, code, interp)
+        ensureAgentFor(name)
+        publishActive()
+    }
+
     fun closeTab(index: Int) {
-        if (Substrate.runningTabId == TabsModel.tabs.getOrNull(index)?.id) {
-            stopPlay(); sys?.stopAutoRun()
-        }
+        val tab = TabsModel.tabs.getOrNull(index) ?: return
+        sys?.deleteFileCascade(tab.fileName)
         TabsModel.close(index)
         publishActive()
     }
@@ -54,7 +71,18 @@ class MainScreenApp {
         TabsModel.setActive(index)
         val tab = TabsModel.active() ?: return
         if (fromStep != null) tab.currentStep = fromStep.coerceIn(1, tab.code.lines().size)
+        Substrate.viewingAgentId = AgentsModel.agentFor(tab.fileName)?.id
         publishActive()
+    }
+
+    fun setActiveFile(fileName: String) {
+        val agent = AgentsModel.agentFor(fileName)
+        if (agent != null && agent.status == Status.RUNNING && fileName != Substrate.activeFileName) {
+            Substrate.pendingNavigateFile = fileName
+            return
+        }
+        val idx = TabsModel.tabs.indexOfFirst { it.fileName == fileName }
+        if (idx >= 0) setActiveTab(idx)
     }
 
     fun publishActive() {
@@ -62,19 +90,55 @@ class MainScreenApp {
         Substrate.activeFileName = tab.fileName
         Substrate.activeCode = tab.code
         Substrate.activeCursor = tab.cursorPosition
-        Substrate.status = tab.status
-        Substrate.currentStep = tab.currentStep
-        Substrate.constantsSnapshot = LinkedHashSet(tab.interpreter.constants)
-        Substrate.variablesSnapshot = LinkedHashMap(tab.interpreter.variables)
-        Substrate.hiddenSnapshot = LinkedHashSet(tab.interpreter.hiddenVariables)
-        Substrate.resultsSnapshot = LinkedHashMap(tab.interpreter.results)
-        val snapshot = tab.interpreter.logSnapshot()
+        val v = viewingAgent()
+        val snapshot = v?.interpreter?.logSnapshot() ?: emptyList()
         Substrate.logEntries.clear(); Substrate.logLines.clear()
         for (e in snapshot) {
             Substrate.logEntries.add(e)
             Substrate.logLines.add(e.text)
         }
     }
+
+    fun ensureAgentFor(fileName: String) {
+        if (AgentsModel.agentFor(fileName) != null) return
+        val n = AgentsModel.agents.size + 1
+        val name = "agent-$n"
+        val interp = newInterpreter()
+        AgentsModel.create(name, fileName, interp)
+        if (Substrate.viewingAgentId == null) {
+            Substrate.viewingAgentId = AgentsModel.agentFor(fileName)?.id
+        }
+    }
+
+    fun createAgentFor(fileName: String) {
+        if (AgentsModel.agentFor(fileName) != null) {
+            Substrate.log("Agent already exists on $fileName")
+            return
+        }
+        if (AgentsModel.agents.size >= AgentsModel.MAX_AGENTS) {
+            Substrate.log("Max ${AgentsModel.MAX_AGENTS} agents reached")
+            return
+        }
+        val n = AgentsModel.agents.size + 1
+        val interp = newInterpreter()
+        val a = AgentsModel.create("agent-$n", fileName, interp)
+        if (a != null) {
+            Substrate.viewingAgentId = a.id
+            Substrate.log("Created ${a.name} on $fileName")
+        }
+        publishActive()
+    }
+
+    fun removeAgent(id: Int) {
+        val a = AgentsModel.byId(id) ?: return
+        sys?.stopAgent(id)
+        AgentsModel.remove(id)
+        if (Substrate.viewingAgentId == id) Substrate.viewingAgentId = null
+        Substrate.log("Removed ${a.name}")
+        publishActive()
+    }
+
+    fun viewingAgentOrNull(): AgentState? = viewingAgent()
 
     fun applyDefault() {
         ensureMainTab()
@@ -86,6 +150,15 @@ class MainScreenApp {
         tab.cursorPosition = 0
         tab.interpreter.reset()
         syncVariablesFromCode()
+        AgentsModel.agentFor(tab.fileName)?.let { a ->
+            a.interpreter.reset()
+            a.currentStep = 1
+            a.status = Status.STOPPED
+            a.variablesSnapshot = emptyMap()
+            a.resultsSnapshot = emptyMap()
+            a.constantsSnapshot = emptySet()
+            a.hiddenSnapshot = emptySet()
+        }
         publishActive()
     }
 
@@ -104,25 +177,40 @@ class MainScreenApp {
 
     fun openSamplesTab(item: SAMPLES.Item) {
         val n = TabsModel.tabs.size + 1
-        TabsModel.create("sample$n.true", item.code, interpreter = newInterpreter())
+        val interp = newInterpreter()
+        TabsModel.create("sample$n.true", item.code, interpreter = interp)
+        ensureAgentFor("sample$n.true")
         publishActive()
     }
 
     fun resetToStart() {
-        ensureMainTab()
-        val tab = TabsModel.active() ?: return
-        tab.fileName = Substrate.startFileName
+        val tab = activeTab() ?: return
+        resetFile(tab.fileName)
+    }
+
+    fun resetFile(fileName: String) {
+        val tab = TabsModel.byFileName(fileName) ?: return
+        sys?.stopAgentForFile(fileName)
         tab.code = Substrate.startCode
+        tab.dirty = false
         tab.currentStep = 1
         tab.status = Status.STOPPED
-        tab.cursorPosition = 0
-        tab.interpreter.reset()
-        syncVariablesFromCode()
+        AgentsModel.agentFor(fileName)?.let { a ->
+            a.interpreter.reset()
+            a.currentStep = 1
+            a.status = Status.STOPPED
+            a.variablesSnapshot = emptyMap()
+            a.resultsSnapshot = emptyMap()
+            a.constantsSnapshot = emptySet()
+            a.hiddenSnapshot = emptySet()
+        }
+        Substrate.log("Reset file $fileName")
         publishActive()
     }
 
     fun saveCurrentAsStart() {
-        Substrate.startCode = code()
+        val tab = activeTab() ?: return
+        Substrate.startCode = tab.code
         Substrate.startFileName = "start.true"
         Substrate.log("Start state updated")
     }
@@ -138,10 +226,15 @@ class MainScreenApp {
             val value = m.groupValues[1].trim()
             val name = m.groupValues[2].trim()
             val flags = m.groupValues[3]
-            if (name.isEmpty()) continue
+            if (name.isEmpty() || name == "nothing") continue
             tab.interpreter.variables[name] = value
             if (flags.contains("*")) tab.interpreter.hiddenVariables += name
             if (flags.contains("@")) tab.interpreter.constants += name
+        }
+        AgentsModel.agentFor(tab.fileName)?.let { a ->
+            a.variablesSnapshot = LinkedHashMap(tab.interpreter.variables)
+            a.hiddenSnapshot = LinkedHashSet(tab.interpreter.hiddenVariables)
+            a.constantsSnapshot = LinkedHashSet(tab.interpreter.constants)
         }
     }
 
@@ -165,51 +258,49 @@ class MainScreenApp {
         return true
     }
 
-    fun canStep(): Boolean = Substrate.status != Status.RUNNING
+    fun canStep(): Boolean {
+        val a = viewingAgent() ?: return false
+        return a.status != Status.RUNNING
+    }
 
-    fun stepOn(tab: TabState): StepResult? {
+    fun stepOn(agent: AgentState): StepResult? {
+        val tab = TabsModel.byFileName(agent.fileName) ?: return null
         if (!validateTab(tab)) { publishActive(); return null }
-        val result = tab.interpreter.executeOneStep(tab.code)
-        if (result.errorLine != null) {
-            tab.status = Status.PAUSED
-            tab.interpreter.forceStep(result.errorLine)
-            tab.currentStep = result.errorLine
-            Substrate.errorLines = Substrate.errorLines + result.errorLine
-        }
-        applyResult(tab, result)
-        return result
+        return sys?.stepAgent(agent.id)
     }
 
     fun step(): StepResult? {
-        val tab = activeTab() ?: return null
-        return stepOn(tab)
+        val a = viewingAgent() ?: return null
+        return stepOn(a)
     }
 
     fun stepBack(): StepResult? {
-        if (!canStep()) return null
-        val tab = activeTab() ?: return null
-        val result = tab.interpreter.executeStepBack() ?: run {
-            tab.interpreter.appendLog("No steps to go back", "info")
-            publishActive()
-            return null
-        }
-        applyResult(tab, result)
+        val a = viewingAgent() ?: return null
+        if (a.status == Status.RUNNING) return null
+        return sys?.stepBackAgent(a.id)
+    }
+
+    fun stepAgentInternal(agentId: Int): StepResult? {
+        val agent = AgentsModel.byId(agentId) ?: return null
+        val tab = TabsModel.byFileName(agent.fileName) ?: return null
+        val result = agent.interpreter.executeOneStep(tab.code)
+        applyResult(agent, result)
         return result
     }
 
     fun startPlay() {
-        val tab = activeTab() ?: return
-        if (!validateTab(tab)) { publishActive(); return }
-        Substrate.runningTabId = tab.id
-        tab.status = Status.RUNNING
-        Substrate.status = Status.RUNNING
-        sys?.startAutoRun(tab.id)
+        val a = viewingAgent() ?: return
+        if (!validateTab(TabsModel.byFileName(a.fileName) ?: return)) { publishActive(); return }
+        sys?.startAgent(a.id)
     }
 
-    fun stopPlay() { Substrate.runningTabId = null }
+    fun stopPlay() {
+        val a = viewingAgent() ?: return
+        sys?.stopAgent(a.id)
+    }
 
-    fun reset() { stopPlay(); resetToStart() }
-    fun setSpeed(ms: Long) { Substrate.speedMs = ms.coerceIn(0L, 5000L) }
+    fun reset() { resetToStart() }
+    fun setSpeed(ms: Long) { viewingAgent()?.speedMs = ms.coerceIn(0L, 5000L) }
     fun rememberProject(name: String) { Substrate.history = (Substrate.history + name).distinct().takeLast(5) }
     fun autosave() { if (validateCurrent()) rememberProject(fileName()) }
 
@@ -271,6 +362,26 @@ class MainScreenApp {
         Substrate.activeFileName = fixed
     }
 
+    fun deleteVariable(name: String) {
+        val agent = viewingAgent() ?: return
+        val tab = TabsModel.byFileName(agent.fileName) ?: return
+        agent.interpreter.variables.remove(name)
+        agent.interpreter.hiddenVariables.remove(name)
+        agent.interpreter.constants.remove(name)
+        agent.interpreter.results.remove(name)
+        val regex = Regex(
+            """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(name)}([ \t]*[*@]*)?[ \t]*$""",
+            RegexOption.MULTILINE
+        )
+        tab.code = regex.replace(tab.code) { "" }.replace(Regex("""\n{3,}"""), "\n\n")
+        tab.dirty = true
+        agent.variablesSnapshot = LinkedHashMap(agent.interpreter.variables)
+        agent.hiddenSnapshot = LinkedHashSet(agent.interpreter.hiddenVariables)
+        agent.constantsSnapshot = LinkedHashSet(agent.interpreter.constants)
+        Substrate.log("Destroyed variable '$name' (UI)")
+        publishActive()
+    }
+
     fun markSampleDone(tab: TabState) {
         val match = SAMPLES.items.firstOrNull { it.code.trim() == tab.code.trim() }
         if (match != null && match.id !in Substrate.completedSamples) {
@@ -283,46 +394,60 @@ class MainScreenApp {
         }
     }
 
-    fun applyResult(tab: TabState, result: StepResult) {
+    fun applyResult(agent: AgentState, result: StepResult) {
         if (result.command != null && result.command.startsWith("activeTab:")) {
             val idx = result.command.removePrefix("activeTab:").toIntOrNull() ?: 1
             setActiveTab(idx - 1, result.currentStep)
             return
         }
-        tab.currentStep = result.currentStep
-        tab.status = when {
-            tab.status == Status.RUNNING && result.status == Status.STOPPED -> Status.RUNNING
+        agent.currentStep = result.currentStep
+        agent.status = when {
+            agent.status == Status.RUNNING && result.status == Status.STOPPED -> Status.RUNNING
             else -> result.status
         }
+        agent.variablesSnapshot = LinkedHashMap(agent.interpreter.variables)
+        agent.hiddenSnapshot = LinkedHashSet(agent.interpreter.hiddenVariables)
+        agent.resultsSnapshot = LinkedHashMap(agent.interpreter.results)
+        agent.constantsSnapshot = LinkedHashSet(agent.interpreter.constants)
+
         val type = when {
             result.errorLine != null -> "error"
             result.log.startsWith("Jump") -> "jump"
             result.log.contains("Command") -> "command"
+            result.command == "destroy" -> "destroy"
             else -> "step"
         }
-        tab.interpreter.appendLog(result.log, type, result.errorLine ?: (result.currentStep - 1))
-        result.changedVariables.forEach { (k, v) -> tab.interpreter.appendLog("  $k = $v", "info") }
-        result.removedVariables.forEach { tab.interpreter.appendLog("  removed: $it", "info") }
-
-        if (result.errorLine != null) {
-            tab.interpreter.appendLog("✗ Paused at step ${result.errorLine}: ${result.log}", "error", result.errorLine)
-            Substrate.errorLines = Substrate.errorLines + result.errorLine
-        } else if (result.status == Status.FINISHED) {
-            tab.interpreter.appendLog("✓ Program finished at step ${result.currentStep}", "info")
-            markSampleDone(tab)
+        val agentPrefix = "agent:${agent.name}"
+        Substrate.appendLogEntry(be.`true`.LogEntry(
+            "[${agent.name}] ${result.log}",
+            agentPrefix,
+            result.errorLine ?: (result.currentStep - 1)
+        ))
+        result.changedVariables.forEach { (k, v) ->
+            Substrate.appendLogEntry(be.`true`.LogEntry("  $k = $v", agentPrefix))
+        }
+        result.removedVariables.forEach {
+            Substrate.appendLogEntry(be.`true`.LogEntry("  removed: $it", agentPrefix))
         }
 
-        syncCodeWithVariables(tab, result.changedVariables)
-        if (tab.id == activeTab()?.id) syncVariablesFromCode()
+        if (result.errorLine != null) {
+            Substrate.errorLines = Substrate.errorLines + result.errorLine
+        } else if (result.status == Status.FINISHED) {
+            TabsModel.byFileName(agent.fileName)?.let { markSampleDone(it) }
+        }
+
+        syncCodeWithVariables(agent, result.changedVariables)
+        if (agent.id == Substrate.viewingAgentId) syncVariablesFromCode()
         publishActive()
     }
 
-    private fun syncCodeWithVariables(tab: TabState, changed: Map<String, String>) {
+    private fun syncCodeWithVariables(agent: AgentState, changed: Map<String, String>) {
         if (changed.isEmpty()) return
         if (!Substrate.autoSyncDeclarations) return
+        val tab = TabsModel.byFileName(agent.fileName) ?: return
         var newCode = tab.code
         for ((name, value) in changed) {
-            if (name in tab.interpreter.constants) continue
+            if (name in agent.interpreter.constants) continue
             val regex = Regex(
                 """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(name)}([ \t]*[*@]*)?[ \t]*$""",
                 RegexOption.MULTILINE
@@ -333,12 +458,12 @@ class MainScreenApp {
                 "$value = $name${m.groupValues[2]}"
             }
             if (rewritten > 0) {
-                tab.interpreter.appendLog("Rewrote '$name' on $rewritten declaration(s)", "info")
+                Substrate.log("Rewrote '$name' on $rewritten declaration(s)")
             }
         }
         if (newCode != tab.code) {
             tab.code = newCode
-            if (tab.id == activeTab()?.id) Substrate.activeCode = newCode
+            if (tab.id == TabsModel.active()?.id) Substrate.activeCode = newCode
         }
     }
 
@@ -357,16 +482,13 @@ class MainScreenApp {
     }
 
     fun callTabAsync(name: String, params: String, onDone: (String) -> Unit) {
-        asyncScope.launch {
-            val result = callTab(name, params)
-            withContext(Dispatchers.Main) { onDone(result) }
-        }
+        sys?.launchAsync { onDone(callTab(name, params)) }
     }
 
     private fun onAsyncDone(name: String, result: String) {
-        val tab = activeTab() ?: return
-        tab.interpreter.results[name] = result
-        tab.interpreter.appendLog("Async $name completed → ${result.take(40)}", "info")
+        val a = viewingAgent() ?: return
+        a.interpreter.results[name] = result
+        Substrate.log("Async $name completed → ${result.take(40)}")
         publishActive()
     }
 
@@ -388,7 +510,6 @@ class MainScreenApp {
     }
 }
 
-/** Тонкая обёртка над Interpreter.collectFunctions; сами функции уже в Interpreter. */
 private object InterpreterCompat {
     fun collectFunctions(code: String): List<be.`true`.FunctionDef> =
         be.`true`.Interpreter().collectFunctions(code)

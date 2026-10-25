@@ -1,29 +1,157 @@
-This is a Kotlin Multiplatform project targeting Desktop (JVM).
+# Simple True Interpreter 1.0.0 — интерпретатор языка True
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-    - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-    - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-      For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-      the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-      Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-      folder is the appropriate location.
+Кроссплатформенное приложение (Kotlin Multiplatform + Compose Multiplatform)
+для Windows, macOS, Linux. Пакет: `be.simple`.
 
-### Running the apps
+## О языке True
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and
-options:
+**True** — минималистичный текстовый язык, где всё является строкой. Нет чисел,
+нет типов — только строки данных, которые можно именовать, подставлять,
+копировать и перемещать.
 
-- Desktop app:
-    - Hot reload: `./gradlew :desktopApp:hotRun --auto`
-    - Standard run: `./gradlew :desktopApp:run`
+### Основные принципы
 
-### Running tests
+1. **Всё — строка.** Кавычек нет.
+2. **Именование (а не присваивание).** `данные = имя` даёт имя данным слева. Имя
+   справа — ссылка на эти данные. Изменение значения по имени меняет значение и в
+   месте объявления — в тексте программы.
+3. **Программа — это база данных.** Данные хранятся прямо в `.true`-документе.
+4. **Скрытие.** `данные = имя *` — переменная скрыта из Values, но доступна.
+5. **Комментарии.** Любая строка без распознанной команды — просто строка.
+6. **Экранирование.** `\` перед операцией (`=`, `=>`, `^`, `->`, `?`) — текст.
+   `\` в начале строки — вся строка текст.
+7. **Нумерация строк с 1.** Программа по умолчанию — цикл: после последней строки
+   без `=> stop` исполнение возвращается на первую.
 
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
+### Синтаксис
 
-- Desktop tests: `./gradlew :shared:jvmTest`
+| Конструкция | Значение |
+|---|---|
+| `данные = имя` | Именование данных слева |
+| `данные = имя *` | Именование со скрытием |
+| `= label` | Метка (именование пустой строки) |
+| `^ step:N` / `^ label` | Go-to по номеру / метке |
+| `условие ? операция` | Условное выполнение |
+| `a + 1 => math` | Передать выражение в math |
+| `math => result` | Записать результат math |
+| `string => size` | Длина строки |
+| `=> pause` / `=> resume` / `=> stop` / `=> reset` / `=> next` / `=> back` | Команды |
+| `a => b` | Копирование |
+| `a -> b` | Перемещение |
+| `file_path, data => post` | Запись / отправка |
+| `file_path, query => get` | Загрузка / получение |
 
----
+### Копирование и перемещение
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+- **`a => b` — копирование.** `a` сохраняет значение.
+- **`a -> b` — перемещение.** Значение `a` стирается, имя `a` сохраняется.
+
+### Условия
+
+Операторы: `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`, `!`. Слева от `?` —
+условие, справа — любая операция. Если после `?` нет операции — `?` остаётся
+текстом. То же для `=`, `=>`, `^`, `->`.
+
+### Функции
+
+- **math** — вычисляет математическое выражение.
+- **size** — длина строки.
+- **post** — запись в файл / отправка на сервер: `0` (в процессе), `1` (успех),
+  `-1` (ошибка), `""` (не начато).
+- **get** — загрузка / получение.
+
+### Пример
+
+```
+0 = a
+1 = b
+12 = max
+
+= do
+
+a + 1 => math => a
+a < max ? ^ do
+
+=> stop
+```
+
+## Приложение
+
+### Возможности
+
+- Меню `File` (New / Open / Save / Save As / Recent / Exit), `Run` (Play / Step /
+  Step Back / Pause / Stop / Reset), `Settings`, `About`.
+- Пошаговый режим вперёд/назад (история до 12 шагов, настраивается).
+- Автоцикл с настраиваемой скоростью (поле `Speed` в Cycle; изменение ставит
+  на паузу). Переход «Loop → step 1» выполняется без задержки.
+- Редактор с нумерацией строк, подсветкой текущей строки и зеброй.
+- Values: все переменные + скрытые + результаты. Клик по строке копирует её в
+  буфер и показывает плашку «Copied».
+- Log: внизу на всю ширину, новые строки сверху, свежая — подсвечена зелёным,
+  чётные — зеброй; прокрутка + ползунок, выделение, очистка, копирование.
+- Панель **Actions** справа: статические шаблоны всех команд True (кнопки
+  нейтральных цветов). Правый клик по шаблону — «Pin to templates». Секция
+  **Pinned** над `Templates`. Панель сворачивается в полоску.
+- Регулируемые размеры: Values/Cycle, высота Log.
+- При изменении переменной обновляется место её объявления в тексте программы.
+- `Reset` (кнопка и `=> reset`) возвращает к стартовому состоянию
+  (`start.true`). Правый клик по `⟲` → «Save current as start state…» с
+  подтверждением.
+
+### Настройки
+
+- История шагов (12).
+- Скорость шага (ms).
+- Ширина Values (dp).
+- Высота Log (dp).
+
+### Горячие клавиши
+
+- `Ctrl+R` / `Cmd+R` — Play.
+- `Ctrl+P` / `Cmd+P` — Pause.
+- `→` / `←` — Step / Step Back.
+- `Ctrl+Z` / `Cmd+Z` — undo в редакторе.
+
+## Файлы
+
+Все `.true`-файлы по умолчанию хранятся в `~/.simple/`:
+
+- `~/.simple/main.true` — первый файл, создаётся при старте, если его нет.
+- `~/.simple/start.true` — стартовое состояние для `Reset`.
+- остальные `.true` — пользовательские.
+
+**Open…** и **Save As…** используют стандартные диалоги ОС. При **Open** файл
+копируется в `~/.simple/`, чтобы попасть в `Recent`. При **Save As** файл
+пишется по выбранному пути и дублируется в `~/.simple/`.
+
+`Recent` показывает до 10 последних файлов из `~/.simple/`.
+
+## Сборка и запуск
+
+Требования: JDK 21.
+
+```
+./gradlew :composeApp:run
+```
+
+Пакеты:
+
+```
+./gradlew :composeApp:packageDistributionForCurrentOS
+```
+
+## Структура
+
+- `Main.kt` — точка входа
+- `Substrate.kt` — общее состояние
+- `Interpreter.kt` — чистая логика True
+- `MainScreen_App.kt` — логика экрана
+- `MainScreen_User.kt` — UI
+- `MainScreen_System.kt` — корутины, ФС, платформа
+- `MainScreen_Server.kt` — HTTP для `post`/`get`
+- `PROMPT.md` — актуальный промпт проекта
+- `ROADMAP.md` — план развития
+
+## Версия
+
+1.0.0
