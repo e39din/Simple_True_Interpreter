@@ -71,10 +71,10 @@ object SAMPLES {
     }
 
     private fun builtin(): List<Item> = listOf(
-        Item("sample1", "1. Сумма массива",
+        Item("sample1", "1. Sum of array",
             "= result\n1, 2, 3, 4, 5 => :sum => result",
             mapOf("result" to "15")),
-        Item("sample2", "2. Максимум",
+        Item("sample2", "2. Maximum",
             "= result\n3, 7, 2, 9, 4 => :max => result",
             mapOf("result" to "9")),
         Item("sample3", "3. Hello",

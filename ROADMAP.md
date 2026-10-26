@@ -1,141 +1,138 @@
 # Roadmap
 
-## Готово
+## Done
 
-### Язык
-- [x] `math` / `data` разделение.
-- [x] `foreach` с осями (без `.` — конец по отсутствию `,`).
+### Language
+- [x] `math` / `data` separation.
 - [x] `filter`, `matches`.
 - [x] `api:websocket`.
 - [x] `json:get/set/names/values`.
-- [x] `:math:sum = sum`.
-- [x] Скобки в условиях и `math`.
-- [x] `->|` / `=>|` — вставка.
+- [x] Parentheses in conditions and `math`.
+- [x] `->|` / `=>|` — insert.
 - [x] `file:a => file:b`, `file:a -> file:b`.
-- [x] `:result` (вместо `:return`).
-- [x] `:instruction` — **удалён**.
+- [x] `:result` (instead of `:return`).
+- [x] `:instruction` — **removed**.
 - [x] `actions` — `":run"`.
-- [x] `:run` — атомарное выполнение.
-- [x] `:log` — логирует текущую строку.
-- [x] Waiter — авто по `:result`.
-- [x] Все функции — с `:`.
-- [x] `:s` — кратко `:size`.
+- [x] `:run` — atomic execution.
+- [x] `:log` — log the current line.
+- [x] Waiter — auto by `:result`.
+- [x] All functions — with `:`.
+- [x] `:s` — short for `:size`.
 - [x] `:range`, `:repeat`.
-- [x] `:message` — тип `"message"`.
+- [x] `:message` — type `"message"`.
 - [x] `:save` (`=> :save`, `file_name:save`).
 - [x] `:file:a => :path`.
-- [x] `:data:y:size` (вместо `:data:length`).
-- [x] Именование действий.
-- [x] Префикс `:data`/`:math` необязателен.
-- [x] `:error` — стек ошибок файла, реакция через `actions`.
-- [x] Цепочки `=>`.
-- [x] Имя до использования (`= name`).
-- [x] Примеры без `=> :stop` (в середине цикла).
-- [x] **Терминология:** контейнер / именованный контейнер.
-- [x] **`.cycle`** — цикл. **`.agent`** — агент. **`.true`** — больше нет.
-- [x] **`^ N`** — переход на строку N (было `^ step:N`).
-- [x] **`^ file.cycle`** / **`^ file.agent`** / **`^ data.txt`** — переход на файл (с точкой).
-- [x] **`^ :stop`** / **`:pause`** / **`:resume`** / **`:delete`** / **`:reset`** — команды агенту.
-- [x] **Контейнеры агента:** `step`, `cycle`.
-- [x] **1 агент на файл — снято.** `MAX_AGENTS` — удалён.
-- [x] **Порядок движения** — по Y.
+- [x] `:data:y:size` (instead of `:data:length`).
+- [x] Action naming.
+- [x] Prefix `:data` / `:math` is optional.
+- [x] `:error` — error stack, format `<code>, <1|0>, <details>`, `:error:resolve`.
+- [x] Chains `=>`.
+- [x] Name before use (`= name`).
+- [x] **Terminology:** container / named container.
+- [x] **`.cycle`** — cycle. **`.agent`** — agent. **`.true`** — no longer used.
+- [x] **`^ N`** — jump to line N.
+- [x] **`^ file.cycle`** / **`^ file.agent`** / **`^ data.txt`** — jump to file.
+- [x] **`^ :stop`** / **`:pause`** / **`:resume`** / **`:delete`** / **`:reset`** — commands.
+- [x] **Agent containers:** `step`, `cycle`, `speed`, `color`.
+- [x] **1 agent per file — removed.**
+- [x] **Movement order** — by Y.
+- [x] **`copy`** (`COPY_RE`).
+- [x] **Substitution of named containers** — a name in operation position is substituted and executed.
+- [x] **`=>` is never naming** — only `= name`.
+- [x] **`:map` / `:reduce` / `:fold` / `:each`** — new.
+- [x] **`:foreach` removed.**
+- [x] **`:stack:peek`** — new.
+- [x] **`:simple:*`** — 21 functions.
+- [x] **`:agent:wait:timeout`**.
+- [x] **Settings:** `:historyLimit`, `:logLimit`, `:strictMode`, `:autoSync`.
+- [x] **Escaping:** `\ ` (line), `\,` / `\;` / `\.` (single separator).
+- [x] **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
+- [x] **Modules and imports are not needed.**
+- [x] **`MrGreen.agent`** — first start.
+- [x] **EN UI + RU localization.**
 
 ### UI
 - [x] Undo/Redo, auto-save.
-- [x] SearchDialog (`find`/`replace`).
-- [x] Actions по семействам, поиск, описание, Pin.
+- [x] SearchDialog (`find` / `replace`).
+- [x] Actions by families, search, description, Pin.
 - [x] Strict Mode.
-- [x] Golden-тесты.
-- [x] Вкладки → кнопки.
-- [x] Values и Actions сворачиваются.
-- [x] `⛶` — раскрытие.
+- [x] Golden tests.
+- [x] Tabs → chips.
+- [x] Values and Actions collapse.
+- [x] `⛶` — expand.
 - [x] `SamplesDialog`.
 - [x] `TabsPicker`.
-- [x] `lastPressed` — подсветка кнопки.
+- [x] `lastPressed` — button highlight.
 - [x] `Ctrl+P` — play/pause.
-- [x] `Ctrl+↑`/`Ctrl+↓` — шаг назад/вперёд.
-- [x] `Ctrl+F`/`Ctrl+R` — поиск/замена.
-- [x] Расширяемый редактор.
-- [x] Выделение мышью.
-- [x] Ренейминг переменных.
-- [x] Values при изменении кода.
-- [x] Вертикальные файлы (`fileOrder`, `↑`/`↓`).
-- [x] Сохранение состояния панелей.
-- [x] **Кнопки файла** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — сверху, для всех файлов.
-- [x] **Кнопки агента** (`▶⏸⏹⏭⏮`) — снизу, только для `.agent`.
-- [x] **`⋯` удалён** — всё в линии кнопок.
-- [x] **`Templates…` / `Actions…` / `Copy to…` / `Move to…` / `Delete agent`** — удалены.
-- [x] **`TemplatesDialog`** — оставлен в `Settings`.
-- [x] **`ActionsDialog` / `CopyToDialog` / `MoveToDialog` / `DeleteAgentDialog`** — удалены.
+- [x] `Ctrl+↑` / `Ctrl+↓` — step back/forward.
+- [x] `Ctrl+F` / `Ctrl+R` — find/replace.
+- [x] Expandable editor.
+- [x] Mouse selection.
+- [x] Variable renaming.
+- [x] Values when code changes.
+- [x] Vertical files (`fileOrder`, `↑` / `↓`).
+- [x] Panel state persistence.
+- [x] **File buttons** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, all files.
+- [x] **Agent buttons** (`▶⏸⏹⏭⏮`) — bottom, only `.agent`.
+- [x] **`⋯` removed** — everything in the button row.
+- [x] **`NavigateBehavior` removed** — no more "occupied" dialog (agent jumps without reset, or `occupied` error).
+- [x] **`:error` red/green highlight** in editor and log.
+- [x] **Syntax highlight** (simple) — `TrueHighlighter`.
+- [x] **EN/RU switcher** (Settings → Language).
 
-### Инфраструктура
-- [x] `SAMPLES.md` с `!!`.
-- [x] `GoldenTests` (параллельно).
-- [x] `true-core` — отдельный JVM-модуль.
-- [x] Unit-тесты `Interpreter`.
+### Infrastructure
+- [x] `SAMPLES.md` with `!!`.
+- [x] `GoldenTests` (parallel).
+- [x] `true-core` — separate JVM module.
+- [x] Unit tests `Interpreter`.
+- [x] `FUNCTIONS.md` (short format, 12 languages, no Datalog).
 
-## В работе
+## In progress
 
-- [ ] Тёмная тема.
-- [ ] CI под Windows/macOS/Linux.
-- [ ] `:agent:name:actions` — чтение/запись `actions`.
+- [ ] Dark theme.
+- [ ] CI under Windows/macOS/Linux.
+- [ ] `:agent:name:actions` — read/write `actions`.
 
-## Планы
+## Plans
 
-- [ ] **Rust + egui.** Порт `Interpreter` на Rust. Цель: убрать JVM, cold start
-  ~5–50 мс.
-- [ ] `Scheme` / `Table` — реальные просмотры.
-- [ ] Interactive Tutorial (расширенный).
-- [ ] JSON Schema (подмножество).
-- [ ] Публикация `true-core` в Maven.
-- [ ] **Rust-порт `true-core`.**
-- [ ] Мультиязычность (Lua через LuaJ, JS через Rhino).
-- [ ] Внешний интерпретатор через WebSocket.
-- [ ] `.true` — файл настроек проекта.
+- [ ] **Rust + egui.** Port `Interpreter` to Rust. Goal: remove JVM, cold start ~5–50 ms.
+- [ ] **Full syntax highlight** — tokenization of all keywords and containers.
+- [ ] **MD renderer** in `DocDialog` — highlight for `true` / `python` / etc.
+- [ ] `Scheme` / `Table` — real views.
+- [ ] Interactive Tutorial (advanced).
+- [ ] JSON Schema (subset).
+- [ ] Publish `true-core` to Maven.
+- [ ] **Rust port of `true-core`.**
+- [ ] Multilingual (Lua via LuaJ, JS via Rhino).
+- [ ] External interpreter via WebSocket.
+- [ ] `.true` — project settings file.
 
-## Чего не будем делать (и почему)
+## What we won't do (and why)
 
-### Компиляция — не наш путь
+### Compilation — not our path
 
-- **Пока не будем делать компиляцию.** Компиляция — вчерашний день. День
-  сегодняшний — **выполнение на лету** (JIT, интерпретация, динамическая
-  подстановка).
-- **У нас есть всё для этого:** мощное железо, удобный уже скомпилированный
-  софт (JVM, Rust), который может исполнять инструкции на лету.
-- **Компиляция ломает главное:** программу, которая меняет себя. В True код —
-  база данных, `syncCodeWithVariables` переписывает текст объявления. При
-  компиляции это невозможно — код статичен.
-- **Компиляция убивает интерактивность:** пошаговый режим, `Step Back`,
-  `Values` в реальном времени, `actions` агента на каждом шаге. Всё это —
-  только интерпретация.
-- **Скорость не проблема:** `:math`, `:data:*`,
-  `:file:*` — это встроенные функции, они уже «скомпилированы» (JVM/Rust).
-  Интерпретация True — это диспетчеризация контейнеров, а не циклы по
-  миллионам элементов.
-- (Компиляция возможна в будущем как отдельный проект на базе языка True, для решения каких-то специфических задач)
+- **No compilation.** Compilation is yesterday. Today is **on-the-fly execution** (JIT, interpretation, dynamic substitution).
+- **We have everything for it:** powerful hardware, ready-to-use software (JVM, Rust) that can execute instructions on the fly.
+- **Compilation breaks the main thing:** a program that changes itself. In True, code is a database, `syncCodeWithVariables` rewrites the declaration text. With compilation, this is impossible.
+- **Compilation kills interactivity:** step-by-step mode, `Step Back`, real-time `Values`, agent `actions` on each step — all of that is only interpretation.
+- **Speed is not a problem:** `:math`, `:data:*`, `:file:*` — these are built-in functions, already "compiled" (JVM/Rust). Interpretation of True is dispatching containers, not loops over millions of elements.
 
-### Что ещё не будем делать
+### What else we won't do
 
-- **Типы.** Всё — контейнер. Нет `int`, `float`, `bool`, `list`, `map`. Оси
-  `l/x/y/z` — единственная структура.
-- **`for` / `while`.** Только неявный цикл программы + `^` + `?`.
-- **Классы, наследование, ООП.** Файлы-функции, агенты, `actions` — вместо
-  классов.
-- **Многопоточность с общей памятью.** Агенты — изолированные корутины.
-  Общение — через файлы и `:agent:*`, не через `Mutex`.
-- **Пакетные менеджеры, зависимости.** Один файл — одна программа. `:file:*`,
-  `:api:*` — вместо библиотек.
-- **Сборка мусора как проблема.** Контейнеры — иммутабельные, интернируются.
-  JVM/Rust справляются.
-- **«Синтаксический сахар».** `a + b => :math` — уже приятно. `=`/`=>`/`->`/`^`/`?` —
-  5 операторов. Больше не нужно.
-- **Расширения `.true`.** Больше нет (зарезервировано для настроек проекта).
+- **Types.** Everything is a container. No `int`, `float`, `bool`, `list`, `map`. Axes `l/x/y/z` — the only structure.
+- **`for` / `while`.** Only the implicit program loop + `^` + `?`.
+- **Classes, inheritance, OOP.** File-functions, agents, `actions` — instead of classes.
+- **Multithreading with shared memory.** Agents are isolated coroutines. Communication — via files and `:agent:*`, not `Mutex`.
+- **Package managers, dependencies.** One file — one program. `:file:*`, `:api:*` — instead of libraries.
+- **Garbage collection as a problem.** Containers are immutable, interned. JVM/Rust handle it.
+- **"Syntactic sugar".** `a + b => :math` is already nice. `=` / `=>` / `->` / `^` / `?` — 5 operators. No more needed.
+- **`.true` extensions.** No longer used (reserved for project settings).
+- **Modules / imports.** Any file can be opened from code — `:file:read` / `^ file.cycle` / `:file_name`. No `import` / `require` / `use`.
 
-### Куда лучше вложить усилия
+### Where to invest
 
-- **Rust + egui** — быстрый cold start, нативный бинарник, без JVM.
-- **Мультиязычность** — Lua (LuaJ), JS (Rhino) как «файлы-функции».
-- **Внешний интерпретатор через WebSocket** — для тяжёлых языков (Python,
-  Erlang).
-- **Тёмная тема**, **CI**, **публикация** `true-core`.
-- **Interactive Tutorial** — расширенный, интерактивный.
+- **Rust + egui** — fast cold start, native binary, no JVM.
+- **Multilingual** — Lua (LuaJ), JS (Rhino) as "file-functions".
+- **External interpreter via WebSocket** — for heavy languages (Python, Erlang).
+- **Dark theme**, **CI**, **publishing** `true-core`.
+- **Interactive Tutorial** — advanced, interactive.

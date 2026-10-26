@@ -35,6 +35,7 @@ class MainScreenApp {
             InterpreterCompat.collectFunctions(tab.code).any { it.source == src && it.name == fn }
         },
         agentCaller = { callerId, name, action, arg -> callAgent(callerId, name, action, arg) },
+        simpleCaller = { action, arg -> sys?.simpleAction(action, arg) },
         callerAgentId = callerAgentId
     )
 
@@ -99,11 +100,6 @@ class MainScreenApp {
     }
 
     fun setActiveFile(fileName: String) {
-        val agent = AgentsModel.agentFor(fileName)
-        if (agent != null && agent.status == Status.RUNNING && fileName != Substrate.activeFileName) {
-            Substrate.pendingNavigateFile = fileName
-            return
-        }
         val idx = TabsModel.tabs.indexOfFirst { it.fileName == fileName }
         if (idx >= 0) setActiveTab(idx)
     }
@@ -250,6 +246,8 @@ class MainScreenApp {
             a.variablesSnapshot = LinkedHashMap(tab.interpreter.variables)
             a.hiddenSnapshot = LinkedHashSet(tab.interpreter.hiddenVariables)
             a.constantsSnapshot = LinkedHashSet(tab.interpreter.constants)
+            tab.interpreter.variables["color"]?.let { c -> Substrate.parseColor(c)?.let { a.color = it } }
+            tab.interpreter.variables["speed"]?.toLongOrNull()?.let { a.speedMs = it.coerceIn(0L, 5000L) }
             AgentsModel.recalcWaiter(a)
         }
     }
@@ -282,7 +280,9 @@ class MainScreenApp {
     fun stepOn(agent: AgentState): StepResult? {
         val tab = TabsModel.byFileName(agent.fileName) ?: return null
         if (!validateTab(tab)) { publishActive(); return null }
-        return sys?.stepAgent(agent.id)
+        val r = sys?.stepAgent(agent.id)
+        publishActive()
+        return r
     }
 
     fun step(): StepResult? {
@@ -324,7 +324,12 @@ class MainScreenApp {
     fun stepBackAll() { sys?.stepBackAllAgents() }
 
     fun reset() { resetToStart() }
-    fun setSpeed(ms: Long) { viewingAgent()?.speedMs = ms.coerceIn(0L, 5000L) }
+    fun setSpeed(ms: Long) {
+        viewingAgent()?.let { agent ->
+            agent.speedMs = ms.coerceIn(0L, 5000L)
+            agent.interpreter.variables["speed"] = agent.speedMs.toString()
+        }
+    }
     fun rememberProject(name: String) { Substrate.history = (Substrate.history + name).distinct().takeLast(5) }
     fun autosave() { if (validateCurrent()) rememberProject(fileName()) }
 
@@ -502,6 +507,9 @@ class MainScreenApp {
         agent.resultsSnapshot = LinkedHashMap(agent.interpreter.results)
         agent.constantsSnapshot = LinkedHashSet(agent.interpreter.constants)
 
+        agent.interpreter.variables["color"]?.let { c -> Substrate.parseColor(c)?.let { agent.color = it } }
+        agent.interpreter.variables["speed"]?.toLongOrNull()?.let { agent.speedMs = it.coerceIn(0L, 5000L) }
+
         val agentPrefix = "agent:${agent.name}"
         Substrate.appendLogEntry(be.`true`.LogEntry(
             "[${agent.name}] ${result.log}",
@@ -524,7 +532,6 @@ class MainScreenApp {
 
         syncCodeWithVariables(agent, result.changedVariables)
         if (agent.id == Substrate.viewingAgentId) syncVariablesFromCode(force = false)
-        publishActive()
     }
 
     private fun syncCodeWithVariables(agent: AgentState, changed: Map<String, String>) {

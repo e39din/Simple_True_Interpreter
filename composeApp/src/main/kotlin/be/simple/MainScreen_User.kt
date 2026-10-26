@@ -90,6 +90,8 @@ private val BTN_FG_DISABLED = Color(0xFFB0B6C1)
 private val CONST_COLOR = Color(0xFFE8D5A8)
 private val ERROR_BADGE = Color(0xFFFFCDD2)
 private val ERROR_TEXT = Color(0xFFB71C1C)
+private val RESOLVED_BADGE = Color(0xFFC8E6C9)
+private val RESOLVED_TEXT = Color(0xFF2E7D32)
 private val FINISH_COLOR = Color(0xFF2E7D32)
 private val STRICT_BADGE = Color(0xFFFFF59D)
 private val DESTROY_COLOR = Color(0xFF9C27B0)
@@ -214,7 +216,6 @@ fun App() {
     if (Substrate.showSearch) SearchDialog(app, onDismiss = { Substrate.showSearch = false })
     if (Substrate.showDocDialog) DocDialog(onDismiss = { Substrate.showDocDialog = false })
     if (Substrate.showSamplesDialog) SamplesDialog(app, onDismiss = { Substrate.showSamplesDialog = false })
-    if (Substrate.showTemplatesDialog) TemplatesDialog(onDismiss = { Substrate.showTemplatesDialog = false })
     if (Substrate.showDeleteFileDialog) DeleteFileDialog(app, sys, onDismiss = { Substrate.showDeleteFileDialog = false })
 
     if (Substrate.pendingRenameFile != null) {
@@ -224,37 +225,6 @@ fun App() {
             onConfirm = { newName ->
                 sys.renameFile(Substrate.pendingRenameFile!!, newName)
                 Substrate.pendingRenameFile = null
-            }
-        )
-    }
-
-    if (Substrate.pendingNavigateFile != null) {
-        val target = Substrate.pendingNavigateFile
-        val occupying = target?.let { AgentsModel.agentFor(it) }
-        NavigateBehaviorDialog(
-            occupiedFileName = target ?: "",
-            occupyingAgent = occupying,
-            onDismiss = { Substrate.pendingNavigateFile = null },
-            onConfirm = { behavior ->
-                Substrate.navigateBehavior = behavior
-                val t = Substrate.pendingNavigateFile
-                if (t != null) {
-                    when (behavior) {
-                        NavigateBehavior.EVICT -> {
-                            occupying?.let { sys.pauseAgent(it.id) }
-                            app.setActiveFile(t)
-                        }
-                        NavigateBehavior.WAIT -> {
-                            Substrate.log("Waiting for ${occupying?.name ?: "agent"} on $t…")
-                            app.setActiveFile(t)
-                        }
-                        NavigateBehavior.STAY -> { }
-                        NavigateBehavior.ERROR -> {
-                            Substrate.log("Cannot open $t: occupied by ${occupying?.name ?: "agent"}")
-                        }
-                    }
-                }
-                Substrate.pendingNavigateFile = null
             }
         )
     }
@@ -500,103 +470,108 @@ private fun descriptionFor(template: String): String = when {
     template.contains("=> :math:sum") || template.contains("=> :math:min") ||
             template.contains("=> :math:max") || template.contains("=> :math:avg") ||
             template.contains("=> :math:product") || template.contains("=> :math:count") ||
-            template.contains("=> :math:sort") -> "Списки (числа)"
+            template.contains("=> :math:sort") -> "Lists (numbers)"
     template.contains("=> :sum") || template.contains("=> :min") ||
             template.contains("=> :max") || template.contains("=> :avg") ||
-            template.contains("=> :product") || template.contains("=> :count") -> "Списки (числа)"
-    template.contains("=> :math") -> "Арифметика / битовые / булевы"
-    template.contains("=> :data:substring") -> "Подстрока"
-    template.contains("=> :data:indexOf") -> "Индекс подстроки"
-    template.contains("=> :data:replace") -> "Замена подстроки"
-    template.contains("=> :data:lower") -> "В нижний регистр"
-    template.contains("=> :data:upper") -> "В верхний регистр"
-    template.contains("=> :data:trim") -> "Обрезать пробелы"
-    template.contains("=> :data:chars") -> "Разбить на символы"
-    template.contains("=> :data:charAt") -> "Символ по индексу"
-    template.contains("=> :data:size") -> "Размер по оси"
-    template.contains("=> :data:reverse") -> "Реверс"
-    template.contains("=> :data:unique") -> "Уникальные"
-    template.contains("=> :data:contains") -> "Содержит"
-    template.contains("=> :data:slice") -> "Срез"
-    template.contains("=> :data:join") -> "Склейка"
-    template.contains("=> :data:push") -> "В список (push)"
-    template.contains("=> :data:pop") -> "Из списка (pop)"
-    template.contains("=> :data:remove") -> "Удалить по индексу"
-    template.contains("=> :data:swap") -> "Поменять местами"
-    template.contains("=> :data:deleteRange") -> "Удалить диапазон"
-    template.contains("=> :data:replaceRange") -> "Заменить диапазон"
-    template.contains("=> :data:sort") -> "Сортировка"
-    template.contains("=> :push") -> "В список (push)"
-    template.contains("=> :pop") -> "Из списка (pop)"
-    template.contains("=> :size") -> "Размер по оси"
-    template.contains("=> :s") -> "Размер (кратко)"
-    template.contains("=> :sort") -> "Сортировка"
-    template.contains("=> :lower") -> "В нижний регистр"
-    template.contains("=> :upper") -> "В верхний регистр"
-    template.contains("=> :trim") -> "Обрезать пробелы"
-    template.contains("=> :reverse") -> "Реверс"
-    template.contains("=> :contains") -> "Содержит"
-    template.contains("=> :filter") -> "Фильтр"
-    template.contains("=> :matches") -> "Regex-проверка"
-    template.contains("=> :range") -> "Ряд чисел"
-    template.contains("=> :repeat") -> "Повторить действие"
-    template.contains("=> :json:get") -> "JSON: получить"
-    template.contains("=> :json:set") -> "JSON: установить"
-    template.contains("=> :json:names") -> "JSON: имена"
-    template.contains("=> :json:values") -> "JSON: значения"
-    template.contains("=> :file:data") -> "Файл: чтение/запись"
-    template.contains("=> :file:origin") -> "Файл: origin"
-    template.contains("=> :file:lines") -> "Файл: строки"
-    template.contains("=> :file:create") -> "Файл: создать"
-    template.contains("=> :file:read") -> "Файл: прочитать"
-    template.contains("=> :file:update") -> "Файл: обновить"
-    template.contains("=> :file:delete") -> "Файл: удалить"
-    template.contains("=> :file:list") -> "Файл: список"
-    template.contains("=> :file:exists") -> "Файл: существует"
-    template.contains("=> :path") -> "Путь к файлу"
-    template.contains("=> :console") -> "Команда ОС"
-    template.contains("=> :run") -> "Выполнить строку"
-    template.contains("=> :save") -> "Сохранить"
-    template.contains("=> :load") -> "Загрузить"
+            template.contains("=> :product") || template.contains("=> :count") -> "Lists (numbers)"
+    template.contains("=> :math") -> "Arithmetic / bitwise / boolean"
+    template.contains("=> :data:substring") -> "Substring"
+    template.contains("=> :data:indexOf") -> "Index of substring"
+    template.contains("=> :data:replace") -> "Replace substring"
+    template.contains("=> :data:lower") -> "Lowercase"
+    template.contains("=> :data:upper") -> "Uppercase"
+    template.contains("=> :data:trim") -> "Trim whitespace"
+    template.contains("=> :data:chars") -> "Split to chars"
+    template.contains("=> :data:charAt") -> "Char by index"
+    template.contains("=> :data:size") -> "Size by axis"
+    template.contains("=> :data:reverse") -> "Reverse"
+    template.contains("=> :data:unique") -> "Unique"
+    template.contains("=> :data:contains") -> "Contains"
+    template.contains("=> :data:slice") -> "Slice"
+    template.contains("=> :data:join") -> "Join"
+    template.contains("=> :data:push") -> "Push to list"
+    template.contains("=> :data:pop") -> "Pop from list"
+    template.contains("=> :data:remove") -> "Remove by index"
+    template.contains("=> :data:swap") -> "Swap"
+    template.contains("=> :data:deleteRange") -> "Delete range"
+    template.contains("=> :data:replaceRange") -> "Replace range"
+    template.contains("=> :data:sort") -> "Sort"
+    template.contains("=> :push") -> "Push to list"
+    template.contains("=> :pop") -> "Pop from list"
+    template.contains("=> :peek") -> "Peek top"
+    template.contains("=> :size") -> "Size by axis"
+    template.contains("=> :s") -> "Size (short)"
+    template.contains("=> :sort") -> "Sort"
+    template.contains("=> :lower") -> "Lowercase"
+    template.contains("=> :upper") -> "Uppercase"
+    template.contains("=> :trim") -> "Trim whitespace"
+    template.contains("=> :reverse") -> "Reverse"
+    template.contains("=> :contains") -> "Contains"
+    template.contains("=> :filter") -> "Filter"
+    template.contains("=> :matches") -> "Regex match"
+    template.contains("=> :map") -> "Map (functional)"
+    template.contains("=> :reduce") -> "Reduce (functional)"
+    template.contains("=> :fold") -> "Fold (functional)"
+    template.contains("=> :each") -> "Each (functional)"
+    template.contains("=> :range") -> "Range of numbers"
+    template.contains("=> :repeat") -> "Repeat action"
+    template.contains("=> :json:get") -> "JSON: get"
+    template.contains("=> :json:set") -> "JSON: set"
+    template.contains("=> :json:names") -> "JSON: names"
+    template.contains("=> :json:values") -> "JSON: values"
+    template.contains("=> :file:data") -> "File: read/write"
+    template.contains("=> :file:origin") -> "File: origin"
+    template.contains("=> :file:lines") -> "File: lines"
+    template.contains("=> :file:create") -> "File: create"
+    template.contains("=> :file:read") -> "File: read"
+    template.contains("=> :file:update") -> "File: update"
+    template.contains("=> :file:delete") -> "File: delete"
+    template.contains("=> :file:list") -> "File: list"
+    template.contains("=> :file:exists") -> "File: exists"
+    template.contains("=> :path") -> "File path"
+    template.contains("=> :console") -> "OS command"
+    template.contains("=> :run") -> "Run string"
+    template.contains("=> :save") -> "Save"
+    template.contains("=> :load") -> "Load"
     template.contains("=> :api:get") -> "API: GET"
     template.contains("=> :api:post") -> "API: POST"
     template.contains("=> :api:put") -> "API: PUT"
     template.contains("=> :api:delete") -> "API: DELETE"
     template.contains("=> :api:patch") -> "API: PATCH"
     template.contains("=> :api:websocket") -> "API: WebSocket"
-    template.contains("=> :log") -> "Запись в лог"
-    template.contains("=> :message") -> "Пользовательское сообщение"
-    template.contains("=> :result") -> "Результат функции"
-    template.contains("=> :error") -> "Стек ошибок"
-    template.contains("=> :source:function") -> "Локальный вызов"
-    template.contains("=> :test!") -> "Асинхронный вызов вкладки"
-    template.contains("=> :test") -> "Вызов вкладки"
-    template == ":run" -> "Выполнить строку"
-    template == ":log" -> "Логировать строку"
-    template.contains("^ :stop") -> "Остановить агента"
-    template.contains("^ :pause") -> "Пауза агента"
-    template.contains("^ :resume") -> "Продолжить агента"
-    template.contains("^ :delete") -> "Удалить агента"
-    template.contains("^ :reset") -> "Сброс файла"
-    template.contains(":agent:") -> "Свойство агента"
-    template.contains(":agent:status") -> "Все статусы агентов"
-    template.contains("=> :activeTab") -> "Переключить вкладку"
-    template.contains("-> nothing") -> "Уничтожить"
-    template.contains("=> file:") -> "Копировать в файл"
-    template.contains("-> file:") -> "Переместить в файл"
-    template.contains("=> file:b") -> "Копировать файл"
-    template.contains("-> file:b") -> "Переместить файл"
-    template.contains("=> var") -> "Файл → переменная"
-    template.contains("=>|") -> "Вставка (копированием)"
-    template.contains("->|") -> "Вставка (перемещением)"
-    template.contains("^ ") -> "Переход"
-    template.contains("->") -> "Перемещение"
-    template.contains("=>") -> "Копирование / вызов"
-    template.contains("?") -> "Условие"
-    template.contains(":splitter") -> "Сплиттер оси"
-    template.contains("foreach") -> "Цикл по осям"
-    template.contains("=") -> "Именование"
-    template.startsWith("\\") -> "Литерал"
+    template.contains("=> :log") -> "Log"
+    template.contains("=> :message") -> "User message"
+    template.contains("=> :result") -> "Function result"
+    template.contains("=> :error:resolve") -> "Resolve errors"
+    template.contains("=> :error") -> "Error stack"
+    template.contains("=> :source:function") -> "Local call"
+    template.contains("=> :test!") -> "Async tab call"
+    template.contains("=> :test") -> "Tab call"
+    template == ":run" -> "Run string"
+    template == ":log" -> "Log string"
+    template.contains("^ :stop") -> "Stop agent"
+    template.contains("^ :pause") -> "Pause agent"
+    template.contains("^ :resume") -> "Resume agent"
+    template.contains("^ :delete") -> "Delete agent"
+    template.contains("^ :reset") -> "Reset file"
+    template.contains(":agent:") -> "Agent property"
+    template.contains(":agent:status") -> "All agent statuses"
+    template.contains("=> :activeTab") -> "Switch tab"
+    template.contains("-> nothing") -> "Destroy"
+    template.contains("=> file:") -> "Copy to file"
+    template.contains("-> file:") -> "Move to file"
+    template.contains("=> file:b") -> "Copy file"
+    template.contains("-> file:b") -> "Move file"
+    template.contains("=> var") -> "File → var"
+    template.contains("=>|") -> "Insert (copy)"
+    template.contains("->|") -> "Insert (move)"
+    template.contains("^ ") -> "Jump"
+    template.contains("->") -> "Move"
+    template.contains("=>") -> "Copy / call"
+    template.contains("?") -> "Condition"
+    template.contains(":splitter") -> "Axis splitter"
+    template.contains("=") -> "Naming"
+    template.startsWith("\\") -> "Literal"
     else -> ""
 }
 
@@ -732,7 +707,6 @@ private fun FileColumn(
             .then(border)
             .padding(8.dp)
     ) {
-        // Header: имя + раскрыть
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (tab.kind == FileKind.AGENT && agent != null) {
                 Box(Modifier.size(10.dp).background(agent.color, RoundedCornerShape(2.dp)))
@@ -754,7 +728,6 @@ private fun FileColumn(
         }
         Spacer(Modifier.height(4.dp))
 
-        // Кнопки файла — для всех
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             val idx = Substrate.fileOrder.indexOf(tab.fileName)
             val canUp = idx > 0
@@ -762,9 +735,7 @@ private fun FileColumn(
             ActionIconButton("⟲") { app.resetFile(tab.fileName) }
             ActionIconButton("↑", enabled = canUp) { sys.moveFileUp(tab.fileName) }
             ActionIconButton("↓", enabled = canDown) { sys.moveFileDown(tab.fileName) }
-            ActionIconButton("✎") {
-                Substrate.pendingRenameFile = tab.fileName
-            }
+            ActionIconButton("✎") { Substrate.pendingRenameFile = tab.fileName }
             ActionIconButton("🗑") {
                 Substrate.pendingDeleteFile = tab.fileName
                 Substrate.showDeleteFileDialog = true
@@ -782,12 +753,10 @@ private fun FileColumn(
         }
         Spacer(Modifier.height(4.dp))
 
-        // Код
         Box(Modifier.fillMaxWidth().weight(1f).background(Color.White, RoundedCornerShape(6.dp)).padding(4.dp)) {
             StripedCodeField(app, tab, agent)
         }
 
-        // Кнопки агента — только для .agent (снизу)
         if (tab.kind == FileKind.AGENT && agent != null) {
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -995,6 +964,7 @@ private class LineHighlighter(
     private var lastStatusColor: Color? = null
     private var lastAgentColor: Color? = null
     private var lastErrors: Set<Int> = emptySet()
+    private var lastResolved: Set<Int> = emptySet()
     private var lastSearch: List<Int> = emptyList()
     private var lastSearchCurrent: Int = -1
     private var cached: AnnotatedString? = null
@@ -1003,8 +973,10 @@ private class LineHighlighter(
     override fun filter(text: AnnotatedString): TransformedText {
         val code = text.text
         val errorLines = Substrate.errorLines
+        val resolvedLines = Substrate.resolvedLines
 
         if (code == lastCode && currentLine == lastLine && errorLines == lastErrors &&
+            resolvedLines == lastResolved &&
             statusColor == lastStatusColor && agentColor == lastAgentColor &&
             searchMatches == lastSearch && searchCurrent == lastSearchCurrent &&
             cached != null && cachedMapping != null) {
@@ -1030,7 +1002,9 @@ private class LineHighlighter(
                 if (idx % 2 == 1) addStyle(SpanStyle(background = ZEBRA), numStart, textEnd)
 
                 if (idx + 1 in errorLines) {
-                    addStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = ERROR_TEXT), numStart, textEnd)
+                    addStyle(SpanStyle(background = ERROR_BADGE, textDecoration = TextDecoration.Underline, color = ERROR_TEXT), numStart, textEnd)
+                } else if (idx + 1 in resolvedLines) {
+                    addStyle(SpanStyle(background = RESOLVED_BADGE, color = RESOLVED_TEXT), numStart, textEnd)
                 }
 
                 val lineMatch = searchMatches.contains(idx + 1)
@@ -1047,6 +1021,8 @@ private class LineHighlighter(
                         addStyle(SpanStyle(background = DESTROY_BG, color = DESTROY_COLOR, textDecoration = TextDecoration.Underline), from, to)
                     }
                 }
+
+                TrueHighlighter.apply(this, line, textStart)
 
                 if (idx < lines.size - 1) append('\n')
             }
@@ -1073,7 +1049,7 @@ private class LineHighlighter(
             }
         }
 
-        lastCode = code; lastLine = currentLine; lastErrors = errorLines
+        lastCode = code; lastLine = currentLine; lastErrors = errorLines; lastResolved = resolvedLines
         lastStatusColor = statusColor; lastAgentColor = agentColor
         lastSearch = searchMatches; lastSearchCurrent = searchCurrent
         cached = annotated; cachedMapping = mapping
@@ -1320,7 +1296,8 @@ private fun LogList(modifier: Modifier) {
 
 @Composable
 private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
-    val isError = entry.type == "error"
+    val isError = entry.type == "error" && !entry.resolved
+    val isResolved = entry.type == "error" && entry.resolved
     val isDestroy = entry.type == "destroy"
     val isMessage = entry.type == "message"
     val isFinish = entry.text.startsWith("✓")
@@ -1330,6 +1307,7 @@ private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
 
     val bg = when {
         isError -> ERROR_BADGE
+        isResolved -> RESOLVED_BADGE
         isDestroy -> DESTROY_BG
         isMessage -> MESSAGE_BG
         idx == 0 -> Color(0xFFE6F4EA)
@@ -1338,6 +1316,7 @@ private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
     }
     val fg = when {
         isError -> ERROR_TEXT
+        isResolved -> RESOLVED_TEXT
         isDestroy -> DESTROY_COLOR
         isMessage -> MESSAGE_FG
         isFinish -> FINISH_COLOR
@@ -1471,44 +1450,17 @@ private fun DeleteFileDialog(app: MainScreenApp, sys: MainScreenSystem, onDismis
     val name = Substrate.pendingDeleteFile
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete file?", color = TEXT) },
-        text = { Text("Удалить $name? Файл и агент будут удалены.", color = TEXT) },
+        title = { Text(Strings.t("dialog.delete.title"), color = TEXT) },
+        text = { Text(Strings.t("dialog.delete.text").replace("{name}", name ?: ""), color = TEXT) },
         confirmButton = {
-            ActionButton("Delete") {
+            ActionButton(Strings.t("button.delete")) {
                 if (name != null) sys.deleteFileCascade(name)
                 Substrate.pendingDeleteFile = null
                 onDismiss()
             }
         },
-        dismissButton = { ActionButton("Cancel") { Substrate.pendingDeleteFile = null; onDismiss() } }
+        dismissButton = { ActionButton(Strings.t("button.cancel")) { Substrate.pendingDeleteFile = null; onDismiss() } }
     )
-}
-
-@Composable
-private fun NavigateBehaviorDialog(
-    occupiedFileName: String,
-    occupyingAgent: AgentState?,
-    onDismiss: () -> Unit,
-    onConfirm: (NavigateBehavior) -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(440.dp).padding(16.dp)) {
-                Text("Файл занят агентом", color = TEXT, fontSize = 14.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("$occupiedFileName — ${occupyingAgent?.name ?: "agent"}", color = TEXT.copy(alpha = 0.7f), fontSize = 12.sp)
-                Spacer(Modifier.height(10.dp))
-                Text("Что делать?", color = TEXT.copy(alpha = 0.6f), fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ActionButton("Ждать") { onConfirm(NavigateBehavior.WAIT) }
-                    ActionButton("Вытеснить") { onConfirm(NavigateBehavior.EVICT) }
-                    ActionButton("Остаться") { onConfirm(NavigateBehavior.STAY) }
-                    ActionButton("Ошибка") { onConfirm(NavigateBehavior.ERROR) }
-                }
-            }
-        }
-    }
 }
 
 @Composable
@@ -1593,21 +1545,6 @@ private fun TabsPicker(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () 
 }
 
 @Composable
-private fun TemplatesDialog(onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(640.dp).heightIn(max = 640.dp).padding(16.dp)) {
-                Text("Templates", color = TEXT, fontSize = 16.sp)
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.weight(1f)) { TemplatesEditor() }
-                Spacer(Modifier.height(8.dp))
-                ActionButton("Close") { onDismiss() }
-            }
-        }
-    }
-}
-
-@Composable
 private fun SettingsDialog(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
     var tab by remember { mutableStateOf("General") }
     Dialog(onDismissRequest = onDismiss) {
@@ -1639,10 +1576,13 @@ private fun SettingsDialog(app: MainScreenApp, sys: MainScreenSystem, onDismiss:
 
 @Composable
 private fun GeneralEditor(app: MainScreenApp) {
-    var limit by remember { mutableStateOf(Substrate.stepBackLimit.toString()) }
+    val agent = app.viewingAgent()
+    var history by remember { mutableStateOf((agent?.interpreter?.historyLimit ?: 100).toString()) }
+    var logLimit by remember { mutableStateOf((agent?.interpreter?.logLimit ?: 1000).toString()) }
     var speed by remember { mutableStateOf(Substrate.speedMs.toString()) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SettingRow("History steps", limit) { limit = it }
+        SettingRow("History limit", history) { history = it }
+        SettingRow("Log limit", logLimit) { logLimit = it }
         SettingRow("Speed (ms)", speed) { speed = it }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Auto-update declarations", color = TEXT, fontSize = 12.sp, modifier = Modifier.weight(1f))
@@ -1652,10 +1592,17 @@ private fun GeneralEditor(app: MainScreenApp) {
             Text("Strict Mode (no ':' functions)", color = TEXT, fontSize = 12.sp, modifier = Modifier.weight(1f))
             Checkbox(checked = Substrate.strictMode, onCheckedChange = { Substrate.strictMode = it; app.validateCurrent() })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Language", color = TEXT, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            TabChip("EN", Strings.lang == "en") { Strings.lang = "en" }
+            Spacer(Modifier.width(4.dp))
+            TabChip("RU", Strings.lang == "ru") { Strings.lang = "ru" }
+        }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ActionButton("Apply") {
-                Substrate.stepBackLimit = limit.toIntOrNull()?.coerceIn(1, 100) ?: 12
+                agent?.interpreter?.historyLimit = history.toIntOrNull()?.coerceIn(1, 1000) ?: 100
+                agent?.interpreter?.logLimit = logLimit.toIntOrNull()?.coerceIn(100, 10000) ?: 1000
                 Substrate.speedMs = speed.toLongOrNull()?.coerceIn(0L, 5000L) ?: 400L
             }
             ActionButton("Run golden tests") {

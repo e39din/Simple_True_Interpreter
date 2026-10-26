@@ -33,12 +33,9 @@ data class Snapshot(
     val waitUntilMs: Long?
 )
 
-data class LogEntry(val text: String, val type: String, val lineNumber: Int? = null)
+data class LogEntry(val text: String, val type: String, val lineNumber: Int? = null, val resolved: Boolean = false)
 
-enum class AgentAction {
-    STATUS, WAITER,
-    WAIT
-}
+enum class AgentAction { STATUS, WAITER, WAIT }
 
 class Interpreter(
     var tabCaller: ((String, String) -> String)? = null,
@@ -48,6 +45,7 @@ class Interpreter(
     var funcCaller: ((String, String, String, Boolean) -> String)? = null,
     var funcExists: ((String, String) -> Boolean)? = null,
     var agentCaller: ((callerAgentId: Int, name: String, action: AgentAction, arg: String?) -> Unit)? = null,
+    var simpleCaller: ((action: String, arg: String?) -> Unit)? = null,
     var callerAgentId: Int = -1
 ) {
     var currentStep: Int = 1; private set
@@ -71,11 +69,19 @@ class Interpreter(
     var returnValue: String? = null; private set
     var hasReturn: Boolean = false; private set
     var waitUntilMs: Long? = null
+    var timeoutMs: Long? = null
+
+    var historyLimit: Int = 100
+    var logLimit: Int = 1000
+    var strictMode: Boolean = false
+    var autoSync: Boolean = true
 
     private val history = ArrayDeque<Snapshot>()
-    var historyLimit: Int = 12
+    private val expansionStack = ArrayDeque<String>()
+    private var mapDepth = 0
 
-    private var inForeach: Boolean = false
+    private var parsedCacheCode: String? = null
+    private var parsedCache: List<Line> = emptyList()
 
     private var combinedRegexVar: Regex? = null
     private var combinedRegexVarDirty = true
@@ -115,7 +121,13 @@ class Interpreter(
     fun setStatusPublic(s: Status) { status = s }
     private fun setStatus(s: Status) { status = s }
 
-    fun parse(code: String): List<Line> = code.lines().mapIndexed { i, t -> Line(i + 1, t) }
+    fun parse(code: String): List<Line> {
+        if (code === parsedCacheCode && parsedCache.isNotEmpty()) return parsedCache
+        val lines = code.lines().mapIndexed { i, t -> Line(i + 1, t) }
+        parsedCacheCode = code
+        parsedCache = lines
+        return lines
+    }
 
     fun validate(lines: List<Line>, strict: Boolean = false): List<Error> {
         val labels = collectLabels(lines)
@@ -141,12 +153,7 @@ class Interpreter(
                 val m = forbidden.find(t)
                 if (m != null) {
                     val name = m.groupValues[1]
-                    val allowed = name in setOf("parameters", "result", "l", "x", "y", "z",
-                        "status", "wait", "nothing", "run", "log", "message", "s", "range", "repeat",
-                        "save", "error", "agent", "splitter", "foreach", "filter", "matches", "json",
-                        "file", "api", "console", "load", "get", "post", "path", "activeTab", "source",
-                        "test", "return")
-                    if (!allowed) {
+                    if (name in SYSTEM_NAMES && tabExists?.invoke(name) != true) {
                         errors += Error(line.number, "Strict Mode: ':$name' is forbidden")
                         continue
                     }
@@ -295,7 +302,7 @@ class Interpreter(
         errorMessages.add(message)
         results["error"] = "1"
         results["error:line"] = lineNumber.toString()
-        results["error:message"] = message
+        results["error:message"] = "custom, 1, $message"
         results["error:lines"] = errorLines.joinToString(",")
         results["error:messages"] = errorMessages.joinToString("\n")
         return StepResult(currentStep, emptyMap(), emptyList(),
@@ -326,6 +333,7 @@ class Interpreter(
         AGENT_STATUS_RE.matchEntire(op)?.let { return runAgentStatus(it, prefix) }
         AGENT_WAITER_RE.matchEntire(op)?.let { return runAgentWaiter(it, prefix) }
         AGENT_STATUS_ALL_RE.matchEntire(op)?.let { return runAgentStatusAll(it, prefix) }
+        AGENT_WAIT_TIMEOUT_RE.matchEntire(op)?.let { return runAgentWaitTimeout(it, prefix) }
         AGENT_WAIT_RE.matchEntire(op)?.let { return runAgentWait(it, prefix) }
 
         MESSAGE_RE.matchEntire(op)?.let { return runMessage(it, prefix) }
@@ -337,6 +345,10 @@ class Interpreter(
         FILE_PATH_RE.matchEntire(op)?.let { return runFilePath(it, prefix) }
 
         ERROR_GET_RE.matchEntire(op)?.let { return runErrorGet(it, line, prefix) }
+        ERROR_RESOLVED_RE.matchEntire(op)?.let { return runErrorResolved(it, prefix) }
+        ERROR_SET_RE.matchEntire(op)?.let { return runErrorSet(it, line, prefix) }
+
+        SIMPLE_RE.matchEntire(op)?.let { return runSimple(it, line, prefix) }
 
         SHORT_SIZE_GET_RE.matchEntire(op)?.let { return runShortSizeGet(it, line, prefix) }
         SHORT_SIZE_RE.matchEntire(op)?.let { return runShortSize(it, line, prefix) }
@@ -344,6 +356,11 @@ class Interpreter(
         SHORT_DATA_CHAIN_RE.matchEntire(op)?.let { return runShortDataChain(it, line, prefix) }
         SHORT_DATA_RE.matchEntire(op)?.let { return runShortData(it, line, prefix) }
         SHORT_MATH_NAMED_RE.matchEntire(op)?.let { return runShortMathNamed(it, prefix) }
+
+        MAP_RE.matchEntire(op)?.let { return runMap(it, line, prefix) }
+        REDUCE_RE.matchEntire(op)?.let { return runReduce(it, line, prefix) }
+        FOLD_RE.matchEntire(op)?.let { return runFold(it, line, prefix) }
+        EACH_RE.matchEntire(op)?.let { return runEach(it, line, prefix) }
 
         DATA_CHAIN_RE.matchEntire(op)?.let { return runDataOpChain(it, line, prefix) }
         MATH_CHAIN_RE.matchEntire(op)?.let { return runMathChain(it, line, prefix) }
@@ -364,8 +381,6 @@ class Interpreter(
             splitters.getOrPut(src) { mutableMapOf() }[axis] = sep
             return OpResult(log = "${prefix}Splitter '$src' axis '$axis' = '$sep'")
         }
-
-        FOREACH_RE.matchEntire(op)?.let { return runForeach(it, line, lines, prefix) }
 
         FILE_RE.matchEntire(op)?.let { return runFile(it, prefix) }
         API_WS_RE.matchEntire(op)?.let { return runApiWs(it, prefix) }
@@ -411,6 +426,7 @@ class Interpreter(
         LOG_MOVE_RE.matchEntire(op)?.let { return runLogMove(it, prefix) }
         LOG_GET_RE.matchEntire(op)?.let { return runLogGet(it, prefix) }
 
+        FUNC_CALL_LOCAL_CHAIN_RE.matchEntire(op)?.let { return runFuncCallLocalChain(it, line, prefix) }
         FUNC_CALL_LOCAL_RE.matchEntire(op)?.let { m ->
             val src = m.groupValues[2].trim(); val fn = m.groupValues[3].trim()
             if (funcExists?.invoke(src, fn) == true) {
@@ -420,6 +436,7 @@ class Interpreter(
                 return OpResult(log = "Local call $src:$fn('$data') → ${result.take(40)}")
             }
         }
+        TAB_CALL_CHAIN_RE.matchEntire(op)?.let { return runTabCallChain(it, line, prefix) }
         TAB_CALL_ASYNC_RE.matchEntire(op)?.let { m ->
             val name = m.groupValues[2].trim().removeSuffix("!")
             if (tabExists?.invoke(name) == true) {
@@ -438,10 +455,12 @@ class Interpreter(
         }
 
         MOVE_RE.matchEntire(op)?.let { return runMove(it, line, prefix) }
+        COPY_RE.matchEntire(op)?.let { return runCopy(it, line, prefix) }
 
         NAMING_EMPTY_RE.matchEntire(op)?.let { m ->
             val name = m.groupValues[1].trim()
             if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = currentStep)
+            if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = currentStep)
             variables[name] = ""
             invalidateSubstituteCache()
             return OpResult(changed = mapOf(name to ""), log = "${prefix}Named empty as '$name'")
@@ -450,6 +469,10 @@ class Interpreter(
         RESULT_NAMING_RE.matchEntire(op)?.let { return runResultNaming(it, line, prefix) }
 
         NAMING_RE.matchEntire(op)?.let { return runNaming(it, line, prefix) }
+
+        if (op.matches(BARE_NAME_RE) && op in variables) {
+            return runSubstitution(op, line, lines, prefix)
+        }
 
         return OpResult(log = "Step ${line.number} executed: ${substitute(op)}")
     }
@@ -583,8 +606,8 @@ class Interpreter(
             ?: return OpResult(log = "${prefix}Insert target must have axis: $target", errorLine = line.number)
         val (name, axes) = path
         if (name in constants) return OpResult(log = "${prefix}Cannot insert into constant '$name'", errorLine = line.number)
-        val container = variables[name]
-            ?: return OpResult(log = "${prefix}Container '$name' not found", errorLine = line.number)
+        if (name !in variables) return OpResult(log = "${prefix}'$name' is not declared", errorLine = line.number)
+        val container = variables[name] ?: ""
         val inserted = insertAt(container, axes, value)
             ?: return OpResult(log = "${prefix}Insert out of range: $target", errorLine = line.number)
         variables[name] = inserted
@@ -624,9 +647,21 @@ class Interpreter(
         val raw = substitute(m.groupValues[1].trim())
         val ms = raw.toLongOrNull() ?: 0L
         waitUntilMs = System.currentTimeMillis() + ms
+        timeoutMs = null
         setStatus(Status.PAUSED)
         agentCaller?.invoke(callerAgentId, "*wait", AgentAction.WAIT, ms.toString())
         return OpResult(log = "${prefix}:agent:self => wait, $ms ms", newStatus = Status.PAUSED)
+    }
+
+    private fun runAgentWaitTimeout(m: MatchResult, prefix: String): OpResult {
+        val raw = substitute(m.groupValues[1].trim())
+        val timeout = m.groupValues[2].trim().toLongOrNull() ?: 0L
+        val ms = raw.toLongOrNull() ?: 0L
+        waitUntilMs = System.currentTimeMillis() + ms
+        timeoutMs = timeout
+        setStatus(Status.PAUSED)
+        agentCaller?.invoke(callerAgentId, "*wait", AgentAction.WAIT, ms.toString())
+        return OpResult(log = "${prefix}:agent:self => wait, $ms ms (timeout $timeout)", newStatus = Status.PAUSED)
     }
 
     private fun runCommand(cmd: String, prefix: String): OpResult = when (cmd) {
@@ -714,6 +749,54 @@ class Interpreter(
         variables[dst] = value
         invalidateSubstituteCache()
         return OpResult(changed = mapOf(dst to value), log = "${prefix}:$key → $dst")
+    }
+
+    private fun runErrorSet(m: MatchResult, line: Line, prefix: String): OpResult {
+        val msg = substitute(m.groupValues[1].trim())
+        errorLines.add(line.number)
+        errorMessages.add(msg)
+        results["error"] = "1"
+        results["error:line"] = line.number.toString()
+        results["error:message"] = "custom, 1, $msg"
+        results["error:lines"] = errorLines.joinToString(",")
+        results["error:messages"] = errorMessages.joinToString("\n")
+        log = listOf(LogEntry("Error: $msg", "error", line.number, false)) + log
+        setStatus(Status.PAUSED)
+        return OpResult(
+            log = "${prefix}:error → '$msg'",
+            newStatus = Status.PAUSED,
+            errorLine = line.number
+        )
+    }
+
+    private fun runErrorResolved(m: MatchResult, prefix: String): OpResult {
+        val arg = m.groupValues[1].trim()
+        val value = arg.toIntOrNull() ?: 1
+        if (value == 0) {
+            val msg = results["error:message"] ?: ""
+            if (msg.isNotEmpty()) {
+                val parts = msg.split(",", limit = 3)
+                if (parts.size >= 2) {
+                    results["error:message"] = "${parts[0].trim()}, 0, ${if (parts.size > 2) parts[2].trim() else ""}"
+                }
+            }
+            errorLines.clear()
+            errorMessages.clear()
+            log = log.map { if (it.type == "error") it.copy(resolved = true) else it }
+        }
+        return OpResult(log = "${prefix}:error:resolve = $value")
+    }
+
+    // ---------- :simple ----------
+
+    private fun runSimple(m: MatchResult, line: Line, prefix: String): OpResult {
+        val raw = m.groupValues[1].trim()
+        val action = m.groupValues[2].trim()
+        val arg = if (raw.isEmpty()) null else substitute(raw)
+        simpleCaller?.invoke(action, arg)
+        results["simple"] = "1"
+        invalidateSubstituteCache()
+        return OpResult(log = "${prefix}:simple:$action${if (arg != null) " ('$arg')" else ""}")
     }
 
     // ---------- :s ----------
@@ -1028,6 +1111,14 @@ class Interpreter(
                 results["replaceRange"] = sb.toString()
                 OpResult(log = "${prefix}:data:replaceRange $from..$to '$v'")
             }
+            "peek" -> {
+                if (parts.isEmpty()) { results["peek"] = ""; OpResult(log = "${prefix}:data:peek empty") }
+                else {
+                    val last = parts.last()
+                    results["peek"] = last
+                    OpResult(log = "${prefix}:data:peek → '${last.take(20)}'")
+                }
+            }
             else -> OpResult(log = "${prefix}unknown :data op: $op", errorLine = line.number)
         }
         invalidateSubstituteCache()
@@ -1060,100 +1151,121 @@ class Interpreter(
         return OpResult(log = "${prefix}:matches '$data' ~ '$regex' → $r")
     }
 
-    // ---------- foreach ----------
+    // ---------- functional ----------
 
-    private fun runForeach(m: MatchResult, line: Line, lines: List<Line>, prefix: String): OpResult {
-        if (inForeach) {
-            return OpResult(log = "${prefix}Nested foreach is not allowed", errorLine = line.number)
-        }
-        val dataName = m.groupValues[1].trim()
-        val axes = m.groupValues[2].split(",").map { it.trim().first() }
-        val names = m.groupValues[3].split(",").map { it.trim() }
-        val bodyFirst = m.groupValues[4].trim()
-        val base = variables[dataName]
-            ?: return OpResult(log = "${prefix}foreach: '$dataName' not found", errorLine = line.number)
-
-        val body = mutableListOf<Line>()
-        var ended = false
-
-        if (bodyFirst.isNotBlank()) {
-            val bf = bodyFirst.trimEnd()
-            if (bf.endsWith(",")) {
-                body += Line(line.number, bf.dropLast(1).trimEnd())
-            } else {
-                body += Line(line.number, bf)
-                ended = true
-            }
-        }
-
-        var i = line.number
-        while (i < lines.size && !ended) {
-            val t = lines[i].text.trim()
-            if (t.isEmpty()) { i++; continue }
-            if (t.endsWith(",")) {
-                body += Line(i + 1, t.dropLast(1).trimEnd())
-                i++
-            } else {
-                body += Line(i + 1, t)
-                ended = true
-                i++
-            }
-        }
-
-        val lists = axes.map { splitBy(dataName, base, it) }
-        val result = StringBuilder()
-        val currentIndices = IntArray(axes.size) { 0 }
-        var bodyError: OpResult? = null
-        val changedVars = LinkedHashMap<String, String>()
-
-        fun recurse(level: Int) {
-            if (bodyError != null) return
-            if (level == axes.size) {
-                for ((idx, name) in names.withIndex()) {
-                    if (idx < axes.size && currentIndices[idx] < lists[idx].size) {
-                        val v = lists[idx][currentIndices[idx]]
-                        variables[name] = v
-                        changedVars[name] = v
-                    }
-                }
-                for (bodyLine in body) {
-                    val r = executeOperation(bodyLine.text, bodyLine, lines, "")
-                    if (r.errorLine != null) { bodyError = r; return }
-                    r.changed.forEach { (k, v) -> variables[k] = v; changedVars[k] = v }
-                    r.removed.forEach { removed -> variables.remove(removed); changedVars.remove(removed) }
-                    if (r.changed.containsKey("result")) result.append(variables["result"] ?: "")
-                }
-                return
-            }
-            for ((idx, _) in lists[level].withIndex()) {
-                currentIndices[level] = idx
-                recurse(level + 1)
-                if (bodyError != null) return
-            }
-        }
-
-        inForeach = true
-        try { recurse(0) } finally { inForeach = false }
-
-        if (bodyError != null) {
-            val e = bodyError!!
-            return OpResult(log = "${prefix}foreach error on line ${e.errorLine}: ${e.log}", errorLine = e.errorLine)
-        }
-
-        changedVars["result"] = result.toString()
-        return OpResult(changed = changedVars,
-            log = "${prefix}foreach ${lists.map { it.size }} → '${result.toString().take(40)}'")
+    private fun resolveExprArg(arg: String): String {
+        val name = arg.trim()
+        return if (name.matches(BARE_NAME_RE) && name in variables) variables[name]!! else arg
     }
 
-    private fun splitBy(name: String, value: String, axis: Char): List<String> {
-        splitters[name]?.get(axis)?.let { return value.split(it) }
-        return when (axis) {
-            'l' -> value.split("\n")
-            'x' -> if (value.isEmpty()) emptyList() else value.map { it.toString() }
-            'y' -> value.split(",")
-            'z' -> value.split(";")
-            else -> listOf(value)
+    private fun runMap(m: MatchResult, line: Line, prefix: String): OpResult {
+        if (mapDepth >= MAX_EXPANSION_DEPTH) {
+            return OpResult(log = "${prefix}:map depth exceeded ($MAX_EXPANSION_DEPTH)", errorLine = line.number)
         }
+        val dataExpr = m.groupValues[1].trim()
+        val axis = if (m.groupValues[2].isNotBlank()) m.groupValues[2][0] else 'x'
+        val exprRaw = m.groupValues[3].trim()
+        val expr = resolveExprArg(exprRaw)
+        val data = substitute(dataExpr)
+        val parts = splitBy(if (dataExpr.contains(":")) dataExpr.substringBefore(":") else dataExpr, data, axis)
+        val out = mutableListOf<String>()
+        mapDepth++
+        try {
+            for ((idx, item) in parts.withIndex()) {
+                val oldN = variables["n"]; val oldI = variables["i"]
+                variables["n"] = item; variables["i"] = (idx + 1).toString()
+                val value = evaluateMath(substitute(expr))
+                if (oldN != null) variables["n"] = oldN else variables.remove("n")
+                if (oldI != null) variables["i"] = oldI else variables.remove("i")
+                out += value
+            }
+        } finally { mapDepth-- }
+        val result = out.joinToString(sepOf(axis))
+        results["map"] = result
+        invalidateSubstituteCache()
+        return OpResult(log = "${prefix}:map ($axis) → '${result.take(40)}'")
+    }
+
+    private fun runReduce(m: MatchResult, line: Line, prefix: String): OpResult {
+        if (mapDepth >= MAX_EXPANSION_DEPTH) {
+            return OpResult(log = "${prefix}:reduce depth exceeded ($MAX_EXPANSION_DEPTH)", errorLine = line.number)
+        }
+        val dataExpr = m.groupValues[1].trim()
+        val axis = if (m.groupValues[2].isNotBlank()) m.groupValues[2][0] else 'x'
+        val initRaw = m.groupValues[3].trim()
+        val exprRaw = m.groupValues[4].trim()
+        val expr = resolveExprArg(exprRaw)
+        val data = substitute(dataExpr)
+        val init = substitute(initRaw)
+        val parts = splitBy(if (dataExpr.contains(":")) dataExpr.substringBefore(":") else dataExpr, data, axis)
+        var acc = init
+        mapDepth++
+        try {
+            for ((idx, item) in parts.withIndex()) {
+                val oldN = variables["n"]; val oldI = variables["i"]; val oldAcc = variables["acc"]
+                variables["n"] = item; variables["i"] = (idx + 1).toString(); variables["acc"] = acc
+                acc = evaluateMath(substitute(expr))
+                if (oldN != null) variables["n"] = oldN else variables.remove("n")
+                if (oldI != null) variables["i"] = oldI else variables.remove("i")
+                if (oldAcc != null) variables["acc"] = oldAcc else variables.remove("acc")
+            }
+        } finally { mapDepth-- }
+        results["reduce"] = acc
+        invalidateSubstituteCache()
+        return OpResult(log = "${prefix}:reduce ($axis) → '${acc.take(40)}'")
+    }
+
+    private fun runFold(m: MatchResult, line: Line, prefix: String): OpResult {
+        if (mapDepth >= MAX_EXPANSION_DEPTH) {
+            return OpResult(log = "${prefix}:fold depth exceeded ($MAX_EXPANSION_DEPTH)", errorLine = line.number)
+        }
+        val dataExpr = m.groupValues[1].trim()
+        val axis = if (m.groupValues[2].isNotBlank()) m.groupValues[2][0] else 'x'
+        val initRaw = m.groupValues[3].trim()
+        val exprRaw = m.groupValues[4].trim()
+        val expr = resolveExprArg(exprRaw)
+        val data = substitute(dataExpr)
+        var acc = substitute(initRaw)
+        val parts = splitBy(if (dataExpr.contains(":")) dataExpr.substringBefore(":") else dataExpr, data, axis)
+        mapDepth++
+        try {
+            for ((idx, item) in parts.withIndex()) {
+                val oldN = variables["n"]; val oldI = variables["i"]; val oldAcc = variables["acc"]
+                variables["n"] = item; variables["i"] = (idx + 1).toString(); variables["acc"] = acc
+                acc = evaluateMath(substitute(expr))
+                if (oldN != null) variables["n"] = oldN else variables.remove("n")
+                if (oldI != null) variables["i"] = oldI else variables.remove("i")
+                if (oldAcc != null) variables["acc"] = oldAcc else variables.remove("acc")
+            }
+        } finally { mapDepth-- }
+        results["fold"] = acc
+        invalidateSubstituteCache()
+        return OpResult(log = "${prefix}:fold ($axis) → '${acc.take(40)}'")
+    }
+
+    private fun runEach(m: MatchResult, line: Line, prefix: String): OpResult {
+        if (mapDepth >= MAX_EXPANSION_DEPTH) {
+            return OpResult(log = "${prefix}:each depth exceeded ($MAX_EXPANSION_DEPTH)", errorLine = line.number)
+        }
+        val dataExpr = m.groupValues[1].trim()
+        val axis = if (m.groupValues[2].isNotBlank()) m.groupValues[2][0] else 'x'
+        val exprRaw = m.groupValues[3].trim()
+        val expr = resolveExprArg(exprRaw)
+        val data = substitute(dataExpr)
+        val parts = splitBy(if (dataExpr.contains(":")) dataExpr.substringBefore(":") else dataExpr, data, axis)
+        mapDepth++
+        try {
+            for ((idx, item) in parts.withIndex()) {
+                val oldN = variables["n"]; val oldI = variables["i"]
+                variables["n"] = item; variables["i"] = (idx + 1).toString()
+                val r = executeOperation(expr, line, listOf(line), "$prefix[each:$idx] ")
+                if (oldN != null) variables["n"] = oldN else variables.remove("n")
+                if (oldI != null) variables["i"] = oldI else variables.remove("i")
+                if (r.errorLine != null) return r
+            }
+        } finally { mapDepth-- }
+        invalidateSubstituteCache()
+        return OpResult(log = "${prefix}:each ($axis) × ${parts.size}")
     }
 
     // ---------- :file ----------
@@ -1299,6 +1411,7 @@ class Interpreter(
         if (path != null) {
             val (name, axes) = path
             if (name in constants) return OpResult(log = "${prefix}Cannot write to constant '$name'", errorLine = line.number)
+            if (name !in variables) return OpResult(log = "${prefix}'$name' is not declared", errorLine = line.number)
             val updated = setAt(variables[name] ?: "", axes, value, true)
             variables[name] = updated
             invalidateSubstituteCache()
@@ -1375,10 +1488,12 @@ class Interpreter(
         val value = if (isAction) rawValue else substituteLeft(rawValue)
         if (name.isEmpty()) return OpResult(log = "${prefix}Naming: empty name", errorLine = line.number)
         if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = line.number)
+        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = line.number)
         val path = parsePath(name)
         if (path != null) {
             val (base, axes) = path
             if (base in constants) return OpResult(log = "${prefix}Cannot write to constant '$base'", errorLine = line.number)
+            if (base !in variables) return OpResult(log = "${prefix}'$base' is not declared", errorLine = line.number)
             val updated = setAt(variables[base] ?: "", axes, value, true)
             variables[base] = updated
             invalidateSubstituteCache()
@@ -1400,6 +1515,7 @@ class Interpreter(
         val key = lhs.removePrefix(":")
         if (name.isEmpty()) return OpResult(log = "${prefix}Result naming: empty name", errorLine = line.number)
         if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = line.number)
+        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = line.number)
         val value = results[key] ?: ""
         if (name in constants) return OpResult(log = "${prefix}Cannot overwrite constant '$name'", errorLine = line.number)
         val hidden = flags.contains('*'); val isConst = flags.contains('@')
@@ -1418,13 +1534,15 @@ class Interpreter(
         if (lhsPath != null) {
             val (name, path) = lhsPath
             if (name in constants) return OpResult(log = "${prefix}Cannot move from constant '$name'", errorLine = line.number)
-            val container = variables[name] ?: return OpResult(log = "${prefix}Move: '$name' not found", errorLine = line.number)
+            if (name !in variables) return OpResult(log = "${prefix}'$name' is not declared", errorLine = line.number)
+            val container = variables[name] ?: ""
             val (picked, remainder) = extractAt(container, path) ?: return OpResult(log = "${prefix}Move: bad path $lhs", errorLine = line.number)
             variables[name] = remainder
             val dstPath = parsePath(dst)
             if (dstPath != null) {
                 val (dn, dp) = dstPath
                 if (dn in constants) return OpResult(log = "${prefix}Cannot move into constant '$dn'", errorLine = line.number)
+                if (dn !in variables) return OpResult(log = "${prefix}'$dn' is not declared", errorLine = line.number)
                 variables[dn] = setAt(variables[dn] ?: "", dp, picked, true)
             } else {
                 if (dst in constants) return OpResult(log = "${prefix}Cannot move into constant '$dst'", errorLine = line.number)
@@ -1434,6 +1552,7 @@ class Interpreter(
             return OpResult(changed = mapOf(dst to picked, name to remainder),
                 log = "${prefix}Moved element '$picked' from $lhs → $dst")
         }
+        if (lhs !in variables) return OpResult(log = "${prefix}'$lhs' is not declared", errorLine = line.number)
         val src = substituteLeft(lhs)
         if (src.isEmpty()) return OpResult(log = "${prefix}Move: empty source")
         if (lhs in constants) return OpResult(log = "${prefix}Cannot move from constant '$lhs'", errorLine = line.number)
@@ -1442,6 +1561,38 @@ class Interpreter(
         variables.remove(lhs)
         invalidateSubstituteCache()
         return OpResult(changed = mapOf(dst to src), removed = listOf(lhs), log = "${prefix}Moved '$src' → $dst")
+    }
+
+    private fun runCopy(m: MatchResult, line: Line, prefix: String): OpResult {
+        val lhs = m.groupValues[1].trim()
+        val dst = m.groupValues[2].trim()
+        val lhsPath = parsePath(lhs)
+        if (lhsPath != null) {
+            val (name, path) = lhsPath
+            if (name !in variables) return OpResult(log = "${prefix}'$name' is not declared", errorLine = line.number)
+            val container = variables[name] ?: ""
+            val picked = extractAtValue(container, path)
+                ?: return OpResult(log = "${prefix}Copy: bad path $lhs", errorLine = line.number)
+            val dstPath = parsePath(dst)
+            if (dstPath != null) {
+                val (dn, dp) = dstPath
+                if (dn in constants) return OpResult(log = "${prefix}Cannot copy into constant '$dn'", errorLine = line.number)
+                if (dn !in variables) return OpResult(log = "${prefix}'$dn' is not declared", errorLine = line.number)
+                variables[dn] = setAt(variables[dn] ?: "", dp, picked, true)
+            } else {
+                if (dst in constants) return OpResult(log = "${prefix}Cannot copy into constant '$dst'", errorLine = line.number)
+                variables[dst] = picked
+            }
+            invalidateSubstituteCache()
+            return OpResult(changed = mapOf(dst to picked), log = "${prefix}Copied element '$picked' from $lhs → $dst")
+        }
+        if (lhs !in variables) return OpResult(log = "${prefix}'$lhs' is not declared", errorLine = line.number)
+        val src = substituteLeft(lhs)
+        if (lhs in constants) return OpResult(log = "${prefix}Cannot copy from constant '$lhs'", errorLine = line.number)
+        if (dst in constants) return OpResult(log = "${prefix}Cannot copy into constant '$dst'", errorLine = line.number)
+        variables[dst] = src
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to src), log = "${prefix}Copied '$src' → $dst")
     }
 
     private fun runLogGet(m: MatchResult, prefix: String): OpResult {
@@ -1473,6 +1624,49 @@ class Interpreter(
         variables[dst] = value
         invalidateSubstituteCache()
         return OpResult(changed = mapOf(dst to value), log = "${prefix}:data:$op → $dst")
+    }
+
+    private fun runFuncCallLocalChain(m: MatchResult, line: Line, prefix: String): OpResult {
+        val src = m.groupValues[2].trim(); val fn = m.groupValues[3].trim(); val dst = m.groupValues[4].trim()
+        if (funcExists?.invoke(src, fn) != true) {
+            return OpResult(log = "${prefix}Local function $src:$fn not found", errorLine = line.number)
+        }
+        val data = substitute(m.groupValues[1].trim())
+        val result = funcCaller?.invoke(src, fn, data, false) ?: ""
+        if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = line.number)
+        variables[dst] = result
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to result), log = "${prefix}Local call $src:$fn('$data') → $dst = '${result.take(40)}'")
+    }
+
+    private fun runTabCallChain(m: MatchResult, line: Line, prefix: String): OpResult {
+        val name = m.groupValues[2].trim(); val dst = m.groupValues[3].trim()
+        if (tabExists?.invoke(name) != true) {
+            return OpResult(log = "${prefix}Tab $name not found", errorLine = line.number)
+        }
+        val data = substitute(m.groupValues[1].trim())
+        val result = tabCaller?.invoke(name, data) ?: ""
+        if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = line.number)
+        variables[dst] = result
+        invalidateSubstituteCache()
+        return OpResult(changed = mapOf(dst to result), log = "${prefix}Tab call $name('$data') → $dst = '${result.take(40)}'")
+    }
+
+    private fun runSubstitution(name: String, line: Line, lines: List<Line>, prefix: String): OpResult {
+        if (name in expansionStack) {
+            return OpResult(log = "${prefix}Recursive substitution '$name'", errorLine = line.number)
+        }
+        if (expansionStack.size >= MAX_EXPANSION_DEPTH) {
+            return OpResult(log = "${prefix}Substitution depth exceeded ($MAX_EXPANSION_DEPTH)", errorLine = line.number)
+        }
+        val body = variables[name]
+            ?: return OpResult(log = "${prefix}'$name' is not a container", errorLine = line.number)
+        expansionStack.addLast(name)
+        try {
+            return executeOperation(body, line, lines, "$prefix[$name] ")
+        } finally {
+            expansionStack.removeLast()
+        }
     }
 
     // ---------- substitute ----------
@@ -1662,7 +1856,7 @@ class Interpreter(
         if (!hasNames) {
             mathResultCache[expr]?.let { return it }
             val r = evaluateMathUncached(expr)
-            if (mathResultCache.size > 500) mathResultCache.clear()
+            if (mathResultCache.size > 2000) mathResultCache.clear()
             mathResultCache[expr] = r
             return r
         }
@@ -1919,6 +2113,16 @@ class Interpreter(
         }
     }
 
+    private fun extractAtValue(container: String, axes: List<AxisIdx>): String? {
+        if (axes.isEmpty()) return container
+        val head = axes.first(); val tail = axes.drop(1)
+        val sep = sepOf(head.axis)
+        val parts = if (head.axis == 'x') container.map { it.toString() } else container.split(sep)
+        val real = normalize(head, parts.size); val i = real - 1
+        if (i !in parts.indices) return null
+        return if (tail.isEmpty()) parts[i] else extractAtValue(parts[i], tail)
+    }
+
     // ---------- snapshot ----------
 
     private fun saveSnapshot() {
@@ -1956,11 +2160,15 @@ class Interpreter(
         variables.clear(); hiddenVariables.clear(); results.clear(); constants.clear(); splitters.clear()
         try { webSockets.values.forEach { it.close() } } catch (_: Exception) {}
         webSockets.clear()
-        log = emptyList(); returnValue = null; hasReturn = false; waitUntilMs = null; history.clear()
+        log = emptyList(); returnValue = null; hasReturn = false; waitUntilMs = null; timeoutMs = null
+        history.clear()
         instruction = ""
         errorLines.clear(); errorMessages.clear()
         rpnCache.clear(); mathResultCache.clear(); invalidateSubstituteCache()
-        inForeach = false
+        expansionStack.clear()
+        mapDepth = 0
+        parsedCacheCode = null
+        parsedCache = emptyList()
     }
 
     fun appendLog(text: String, type: String = "info", lineNumber: Int? = null) {
@@ -1986,8 +2194,15 @@ class Interpreter(
         else -> ","
     }
 
-    private fun splitArgs(s: String): List<String> =
-        s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    private fun splitArgs(s: String): List<String> {
+        val placeholder = "\u0000"
+        val safe = s.replace("\\,", placeholder)
+            .replace("\\;", "\u0001")
+            .replace("\\.", "\u0002")
+        return safe.split(",").map {
+            it.trim().replace(placeholder, ",").replace("\u0001", ";").replace("\u0002", ".")
+        }.filter { it.isNotEmpty() }
+    }
 
     private fun sepOf(axis: Char): String = when (axis) {
         'l' -> "\n"; 'y' -> ","; 'z' -> ";"; 'x' -> ""; else -> ","
@@ -2020,9 +2235,25 @@ class Interpreter(
         }
     }
 
+    private fun splitBy(name: String, value: String, axis: Char): List<String> {
+        splitters[name]?.get(axis)?.let { return value.split(it) }
+        return when (axis) {
+            'l' -> value.split("\n")
+            'x' -> if (value.isEmpty()) emptyList() else value.map { it.toString() }
+            'y' -> splitArgs(value)
+            'z' -> {
+                val placeholder = "\u0000"
+                value.replace("\\;", placeholder).split(";").map { it.replace(placeholder, ";") }
+            }
+            else -> listOf(value)
+        }
+    }
+
     companion object {
         const val DEFAULT_ACTIONS = ":run"
+        private const val MAX_EXPANSION_DEPTH = 10
 
+        private val BARE_NAME_RE = Regex("""^[A-Za-z_]\w*$""")
         private val LABEL_RE = Regex("""^=\s*(\S+)\s*$""")
         private val JUMP_RE = Regex("""^\^\s*(\S+)\s*$""")
         private val COMMAND_RE = Regex("""^=>\s*(pause|resume|stop|reset)\s*$""")
@@ -2031,6 +2262,7 @@ class Interpreter(
         private val NAMING_RE = Regex("""^(.+?)\s*(?<!\\)=\s*($ATOM)\s*([*@]+)?\s*$""")
         private val NAMING_EMPTY_RE = Regex("""^=\s*([A-Za-z_]\w*)\s*$""")
         private val MOVE_RE = Regex("""^($ATOM)\s*->\s*($ATOM)\s*$""")
+        private val COPY_RE = Regex("""^($ATOM)\s*=>\s*($ATOM)\s*$""")
         private val COMPARE_OPS = listOf("==", "!=", "<=", ">=", "<", ">")
         private val BIN_OPS = setOf("+", "-", "*", "/", "//", "%", "**", "<<", ">>", "&", "|", "^")
         private val FUNCS = setOf("abs", "min", "max", "round", "floor", "ceil", "sqrt", "pow", "popcount", "clz", "ctz")
@@ -2038,6 +2270,13 @@ class Interpreter(
             "abs" to 1, "round" to 1, "floor" to 1, "ceil" to 1, "sqrt" to 1,
             "popcount" to 1, "clz" to 1, "ctz" to 1,
             "min" to 2, "max" to 2, "pow" to 2
+        )
+        private val SYSTEM_NAMES = setOf(
+            "result", "parameters", "nothing", "step", "cycle", "speed", "color",
+            "error", "log", "message", "size", "s", "math", "data", "json", "file",
+            "api", "console", "simple", "agent", "run", "range", "repeat",
+            "activeTab", "path", "source", "test", "return", "assert", "call",
+            "filter", "matches", "map", "reduce", "fold", "each"
         )
         private val RUN_FN_RE = Regex("""^(.+?)\s*=>\s*:run\s*$""")
         private val RUN_BARE_RE = Regex("""^:run\s*$""")
@@ -2048,6 +2287,10 @@ class Interpreter(
         private val DATA_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.*?)\s*=>\s*:data:(\w+)\s*$""")
         private val FILTER_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*:filter\s*$""")
         private val MATCHES_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*:matches\s*$""")
+        private val MAP_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.+?)\s*=>\s*:map\s*$""")
+        private val REDUCE_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.+?)\s*,\s*(.+?)\s*=>\s*:reduce\s*$""")
+        private val FOLD_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.+?)\s*,\s*(.+?)\s*=>\s*:fold\s*$""")
+        private val EACH_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.+?)\s*=>\s*:each\s*$""")
         private val JSON_GET_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*:json:get\s*$""")
         private val JSON_SET_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*=>\s*:json:set\s*$""")
         private val JSON_NAMES_RE = Regex("""^(.+?)\s*=>\s*:json:names\s*$""")
@@ -2065,7 +2308,6 @@ class Interpreter(
         private val SHORT_SIZE_RE = Regex("""^(.+?)(?::([lxyz]))?\s*=>\s*:s\s*$""")
         private val SHORT_SIZE_GET_RE = Regex("""^:s\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val SPLITTER_RE = Regex("""^\.\s*=>\s*([A-Za-z_]\w*):splitter:([lxyz])\s*:\s*(\S+)\s*$""")
-        private val FOREACH_RE = Regex("""^([A-Za-z_]\w*):foreach:([lxyz](?:\s*,\s*[lxyz])*)\s*;\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:\s*(.*)$""")
         private val LOG_GET_RE = Regex("""^($LOG_SRC)\s*=>\s*($ATOM)\s*$""")
         private val LOG_MOVE_RE = Regex("""^log\s*->\s*($ATOM)\s*$""")
         private val LOG_FN_RE = Regex("""^(.+?)\s*=>\s*:log\s*$""")
@@ -2077,10 +2319,14 @@ class Interpreter(
         private val FILE_SAVE_RE = Regex("""^([A-Za-z_]\w*):save\s*$""")
         private val FILE_PATH_RE = Regex("""^:file:([A-Za-z_]\w*)\s*=>\s*:path\s*$""")
         private val ERROR_GET_RE = Regex("""^:error(?::(line|message|lines|messages))?\s*=>\s*([A-Za-z_]\w*)\s*$""")
+        private val ERROR_SET_RE = Regex("""^(.+?)\s*=>\s*:error\s*$""")
+        private val ERROR_RESOLVED_RE = Regex("""^(\d+)\s*=>\s*:error:resolve\s*$""")
         private val FUNC_RETURN_RE = Regex("""^:([A-Za-z_]\w*)\s*$""")
         private val RESULT_RE = Regex("""^(.+?)\s*=>\s*:result\s*$""")
         private val ACTIVE_TAB_RE = Regex("""^(\S+)(?:\s*,\s*(\S+))?\s*=>\s*:activeTab\s*$""")
+        private val FUNC_CALL_LOCAL_CHAIN_RE = Regex("""^(.+?)\s*=>\s*\.:([A-Za-z_]\w*):([A-Za-z_]\w*)\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val FUNC_CALL_LOCAL_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*):([A-Za-z_]\w*)\s*$""")
+        private val TAB_CALL_CHAIN_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*)\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val TAB_CALL_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*)\s*$""")
         private val TAB_CALL_ASYNC_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*!)\s*$""")
         private val PATH_RE = Regex("""^([A-Za-z_]\w*)((?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))+)$""")
@@ -2093,25 +2339,24 @@ class Interpreter(
         private val AGENT_STATUS_RE = Regex("""^:agent:([A-Za-z_]\w*):status\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val AGENT_WAITER_RE = Regex("""^:agent:([A-Za-z_]\w*):waiter\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val AGENT_STATUS_ALL_RE = Regex("""^:agent:status\s*=>\s*([A-Za-z_]\w*)\s*$""")
+        private val AGENT_WAIT_TIMEOUT_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*:agent:wait:timeout\s*$""")
         private val AGENT_WAIT_RE = Regex("""^(.+?)\s*=>\s*:agent:wait\s*$""")
-
+        private val SIMPLE_RE = Regex("""^(.*?)\s*=>\s*:simple:([A-Za-z_]\w*)\s*$""")
         private val SHORT_MATH_NAMED_RE = Regex("""^(.+?)\s*=>\s*:(sum|min|max|avg|product|count)\s*$""")
-        private val SHORT_DATA_NAMES = "push|pop|reverse|unique|contains|slice|join|charAt|substring|indexOf|replace|lower|upper|trim|chars|remove|swap|deleteRange|replaceRange|sort|size"
+        private val SHORT_DATA_NAMES = "push|pop|peek|reverse|unique|contains|slice|join|charAt|substring|indexOf|replace|lower|upper|trim|chars|remove|swap|deleteRange|replaceRange|size"
         private val SHORT_DATA_CHAIN_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.*?)\s*=>\s*:($SHORT_DATA_NAMES)\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val SHORT_DATA_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.*?)\s*=>\s*:($SHORT_DATA_NAMES)\s*$""")
-
         private val DATA_X_ONLY = setOf("substring", "replace", "chars")
-
         private val RESULT_NAMES_ONE = setOf(
             "math", "length", "join", "substring", "indexOf", "replace",
             "lower", "upper", "trim", "chars", "charAt", "reverse", "unique",
-            "contains", "slice", "sort", "push", "pop", "pop_rest",
+            "contains", "slice", "sort", "push", "pop", "pop_rest", "peek",
             "insert", "remove", "remove_rest", "swap", "set",
             "deleteRange", "replaceRange", "json", "file", "console", "run",
             "save", "load", "get", "post", "filter", "matches", "size", "ws",
             "result", "log", "parameters", "message", "range",
             "repeat", "s", "path", "error", "error:line", "error:message",
-            "error:lines", "error:messages"
+            "error:lines", "error:messages", "map", "reduce", "fold", "each", "simple"
         )
         private val RESULT_NAMES_SUBST = RESULT_NAMES_ONE - setOf("math", "data", "json", "api")
         private val KNOWN_RESULT_KEYS = setOf(

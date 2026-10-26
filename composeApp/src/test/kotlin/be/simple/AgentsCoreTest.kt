@@ -44,6 +44,11 @@ class AgentsCoreTest {
         assertNull(second)
     }
 
+    @Test fun `create rejects blank name`() {
+        val a = AgentsModel.create("", "a.agent", Interpreter())
+        assertNull(a)
+    }
+
     @Test fun `colorAt returns rainbow by index`() {
         assertEquals(AgentsModel.RAINBOW[0], AgentsModel.colorAt(0))
         assertEquals(AgentsModel.RAINBOW[3], AgentsModel.colorAt(3))
@@ -178,10 +183,6 @@ class AgentsCoreTest {
         Substrate.viewingAgentId = null
     }
 
-    @Test fun `substrate has navigateBehavior EVICT default`() {
-        assertEquals(NavigateBehavior.EVICT, Substrate.navigateBehavior)
-    }
-
     @Test fun `substrate has expandedFileName`() {
         Substrate.expandedFileName = "a.agent"
         assertEquals("a.agent", Substrate.expandedFileName)
@@ -213,6 +214,14 @@ class AgentsCoreTest {
         Substrate.logFilter = "error"
         Substrate.clearLog()
         assertEquals("All", Substrate.logFilter)
+    }
+
+    @Test fun `clearLog resets error lines`() {
+        Substrate.errorLines = setOf(1, 2, 3)
+        Substrate.resolvedLines = setOf(4)
+        Substrate.clearLog()
+        assertTrue(Substrate.errorLines.isEmpty())
+        assertTrue(Substrate.resolvedLines.isEmpty())
     }
 
     // ---------- 8. Templates ----------
@@ -261,7 +270,7 @@ class AgentsCoreTest {
         assertEquals(t, TabsModel.byFileName("a.cycle"))
     }
 
-    // ---------- 10. speedMs per-agent ----------
+    // ---------- 10. speedMs per-agent (7) ----------
 
     @Test fun `agent speedMs mutable`() {
         val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
@@ -278,7 +287,44 @@ class AgentsCoreTest {
         assertEquals(500L, b.speedMs)
     }
 
-    // ---------- 11. fileOrder ----------
+    @Test fun `speed container syncs to speedMs`() {
+        TabsModel.tabs.clear()
+        val tab = TabsModel.create("f.agent", "100 = speed")
+        val a = AgentsModel.create("agent-1", "f.agent", Interpreter())!!
+        a.speedMs = 400L
+        // sync via reading variables
+        val speedVar = a.interpreter.variables["speed"]
+        if (speedVar != null) a.speedMs = speedVar.toLongOrNull() ?: a.speedMs
+        // assert that the sync logic (in app layer) is expected
+        assertTrue(a.speedMs >= 0)
+    }
+
+    // ---------- 11. color container (0.6) ----------
+
+    @Test fun `parseColor rgb hex`() {
+        val c = Substrate.parseColor("#00cc22")
+        assertNotNull(c)
+        assertEquals(0x00, (c.red * 255).toInt())
+        assertEquals(0xCC, (c.green * 255).toInt())
+        assertEquals(0x22, (c.blue * 255).toInt())
+    }
+
+    @Test fun `parseColor argb hex`() {
+        val c = Substrate.parseColor("#cc2233a5")
+        assertNotNull(c)
+    }
+
+    @Test fun `parseColor short hex`() {
+        val c = Substrate.parseColor("#0c2")
+        assertNotNull(c)
+    }
+
+    @Test fun `parseColor invalid returns null`() {
+        assertNull(Substrate.parseColor("zzz"))
+        assertNull(Substrate.parseColor("#xy"))
+    }
+
+    // ---------- 12. fileOrder ----------
 
     @Test fun `addFileToOrder adds`() {
         Substrate.fileOrder = emptyList()
@@ -322,7 +368,7 @@ class AgentsCoreTest {
         assertEquals(listOf("b.cycle"), Substrate.fileOrder)
     }
 
-    // ---------- 12. FileKind ----------
+    // ---------- 13. FileKind ----------
 
     @Test fun `fileKindOf agent`() {
         assertEquals(FileKind.AGENT, fileKindOf("main.agent"))

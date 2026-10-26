@@ -7,6 +7,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 
 object GoldenTests {
     data class Result(val id: String, val title: String, val passed: Boolean, val message: String)
@@ -18,6 +20,16 @@ object GoldenTests {
     }
 
     private fun runOne(item: SAMPLES.Item): Result {
+        return try {
+            runBlocking {
+                withTimeout(30_000) { runOneInternal(item) }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Result(item.id, item.title, false, "timeout 30s")
+        }
+    }
+
+    private fun runOneInternal(item: SAMPLES.Item): Result {
         val interp = Interpreter()
         interp.actions = ":run"
         var guard = 0
@@ -26,6 +38,8 @@ object GoldenTests {
         while (guard < 10000) {
             guard++
             try {
+                interp.waitUntilMs = 0
+                interp.timeoutMs = null
                 val res = interp.executeOneStep(item.code)
                 steps++
                 if (res.errorLine != null) { failure = "error on line ${res.errorLine}"; break }

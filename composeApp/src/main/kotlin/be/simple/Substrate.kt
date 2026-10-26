@@ -40,7 +40,7 @@ data class TabState(
 class AgentState(
     val id: Int,
     var name: String,
-    val color: Color,
+    var color: Color,
     var fileName: String,
     val interpreter: Interpreter
 ) {
@@ -55,8 +55,6 @@ class AgentState(
     var constantsSnapshot: Set<String> by mutableStateOf(emptySet())
     var hiddenSnapshot: Set<String> by mutableStateOf(emptySet())
 }
-
-enum class NavigateBehavior { WAIT, EVICT, STAY, ERROR }
 
 object TabsModel {
     private var counter = 1
@@ -118,6 +116,8 @@ object AgentsModel {
     fun byName(name: String): AgentState? = agents.firstOrNull { it.name == name }
 
     fun create(name: String, fileName: String, interpreter: Interpreter): AgentState? {
+        if (name.isBlank()) return null
+        if (agents.any { it.name == name }) return null
         val agent = AgentState(
             id = TabsModel.newId(), name = name, color = colorAt(agents.size),
             fileName = fileName, interpreter = interpreter
@@ -143,8 +143,7 @@ object AgentsModel {
 
     fun hasResultMarker(code: String): Boolean {
         for (line in code.lines()) {
-            val t = line.trim()
-            if (t == ":result") return true
+            if (line.trim() == ":result") return true
         }
         return false
     }
@@ -163,6 +162,8 @@ object Substrate {
 
         => :stop
     """.trimIndent()
+
+    val DEFAULT_AGENT_CODE = DEFAULT_CODE + "\n#00cc22 = color"
 
     val GITHUB_README_URL = "https://example.com/simple-true-interpreter/README.md"
     val MAX_URL = "https://example.com/simple-true-interpreter"
@@ -227,6 +228,7 @@ object Substrate {
             "data:y, i, j => :swap",
             "data:y => :size",
             "data:y => :sort",
+            "data:y => :stack:peek",
             "value ->| data:y:3",
             "value =>| data:y:3",
             "value -> data:y:3",
@@ -241,9 +243,12 @@ object Substrate {
             ". => raw:splitter:y:,",
             ". => raw:splitter:z:;",
             ". => raw:splitter:x:.")),
-        TemplateGroup("Data — foreach", Color(0xFFB2EBF2), listOf(
-            "data:foreach:y ; n : out\$n, => :push,\nn => :log",
-            "data:foreach:y ; n : sum + n => :math => sum")),
+        TemplateGroup("Functional", Color(0xFFB2EBF2), listOf(
+            "data:y, n + 1 => :map",
+            "data:y, 0, acc + n => :reduce",
+            "data:y, 0, acc + n => :fold",
+            "data:y, n => :log => :each",
+            "data:y, func => :map")),
         TemplateGroup("Data — range/repeat", Color(0xFFB2DFDB), listOf(
             "1, 5 => :range",
             "action, 5 => :repeat")),
@@ -280,7 +285,8 @@ object Substrate {
             "data => :test", "data => :test!",
             ":run", ":log",
             "message => :message",
-            ":error ? ^ :handle")),
+            ":error ? ^ :handle",
+            "1 => :error:resolve")),
         TemplateGroup("Error", Color(0xFFFFEBEE), listOf(
             ":error => dst", ":error:line => dst",
             ":error:message => dst", ":error:lines => dst",
@@ -290,20 +296,23 @@ object Substrate {
             ":agent:main:status => dst", ":agent:main:waiter => dst",
             ":agent:status => dst",
             "100 => :agent:wait",
+            "100, 5000 => :agent:wait:timeout",
             "file:main.cycle -> nothing", "value -> nothing",
             ":get = response", ":math = result", ":size = lineCount",
             ":s = lineCount",
             "1 = step",
             "main.cycle = cycle",
             ":result = out",
-            "0 = lineCount")),
+            "0 = lineCount",
+            "#00cc22 = color",
+            "100 = speed")),
         TemplateGroup("Other", Color(0xFFF3E5F5), listOf(
             "1 => :activeTab", "1, 5 => :activeTab", "\\ literal string"))
     )
 
     var pendingRenameFile: String? by mutableStateOf(null)
-    var version: String by mutableStateOf("1.2.0")
-    var languageVersion: String by mutableStateOf("0.10.0")
+    var version: String by mutableStateOf("1.1.0")
+    var languageVersion: String by mutableStateOf("0.11.0")
     var platform: String by mutableStateOf(detectPlatform())
 
     var activeFileName: String by mutableStateOf("")
@@ -317,7 +326,6 @@ object Substrate {
     var validationErrors: List<Error> by mutableStateOf(emptyList())
 
     var viewingAgentId: Int? by mutableStateOf(null)
-    var navigateBehavior: NavigateBehavior by mutableStateOf(NavigateBehavior.EVICT)
     var expandedFileName: String? by mutableStateOf(null)
 
     var fileOrder: List<String> by mutableStateOf(emptyList())
@@ -325,6 +333,7 @@ object Substrate {
     val logEntries = mutableStateListOf<LogEntry>()
     val logLines = mutableStateListOf<String>()
     var errorLines: Set<Int> by mutableStateOf(emptySet())
+    var resolvedLines: Set<Int> by mutableStateOf(emptySet())
     var logFilter: String by mutableStateOf("All")
 
     fun logCount(type: String): Int =
@@ -333,7 +342,6 @@ object Substrate {
         else logEntries.count { it.type == type }
 
     var speedMs: Long by mutableStateOf(400L)
-    var stepBackLimit: Int by mutableStateOf(12)
     var strictMode: Boolean by mutableStateOf(false)
     var autoSyncDeclarations: Boolean by mutableStateOf(true)
 
@@ -347,9 +355,7 @@ object Substrate {
     var showSearch: Boolean by mutableStateOf(false)
     var showDocDialog: Boolean by mutableStateOf(false)
     var showSamplesDialog: Boolean by mutableStateOf(false)
-    var showTemplatesDialog: Boolean by mutableStateOf(false)
     var showDeleteFileDialog: Boolean by mutableStateOf(false)
-    var pendingNavigateFile: String? by mutableStateOf(null)
     var pendingDeleteFile: String? by mutableStateOf(null)
 
     var docContent: String by mutableStateOf("")
@@ -399,6 +405,7 @@ object Substrate {
         logEntries.clear()
         logLines.clear()
         errorLines = emptySet()
+        resolvedLines = emptySet()
         logFilter = "All"
     }
 
@@ -443,8 +450,6 @@ object Substrate {
     fun loadTemplateSet(name: String) { savedTemplateSets[name]?.let { templateGroups = it } }
     fun deleteTemplateSet(name: String) { savedTemplateSets = savedTemplateSets - name }
 
-    // ---------- fileOrder ----------
-
     fun addFileToOrder(fileName: String) {
         if (fileOrder.contains(fileName)) return
         fileOrder = fileOrder + fileName
@@ -472,6 +477,31 @@ object Substrate {
         list[idx + 1] = list[idx]
         list[idx] = tmp
         fileOrder = list
+    }
+
+    fun parseColor(s: String): Color? {
+        val t = s.trim().removePrefix("#")
+        return try {
+            when (t.length) {
+                3 -> Color(
+                    red = t[0].digitToInt(16) * 17,
+                    green = t[1].digitToInt(16) * 17,
+                    blue = t[2].digitToInt(16) * 17
+                )
+                6 -> Color(
+                    red = t.substring(0, 2).toInt(16),
+                    green = t.substring(2, 4).toInt(16),
+                    blue = t.substring(4, 6).toInt(16)
+                )
+                8 -> Color(
+                    red = t.substring(2, 4).toInt(16),
+                    green = t.substring(4, 6).toInt(16),
+                    blue = t.substring(6, 8).toInt(16),
+                    alpha = t.substring(0, 2).toInt(16)
+                )
+                else -> null
+            }
+        } catch (_: Exception) { null }
     }
 
     fun detectPlatform(): String {

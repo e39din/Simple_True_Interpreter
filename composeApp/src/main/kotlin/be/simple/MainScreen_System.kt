@@ -53,6 +53,17 @@ class MainScreenSystem(private val app: MainScreenApp) {
             app.ensureAgentFor(main)
             pushRecent(main)
             app.ensureMainTab()
+            if (AgentsModel.agents.none { it.fileName.endsWith(".agent") }) {
+                val agentFile = File(baseDir, "MrGreen.agent")
+                if (!agentFile.exists()) {
+                    agentFile.writeText(Substrate.DEFAULT_AGENT_CODE)
+                }
+                val mrCode = agentFile.readText()
+                val mrInterp = app.newInterpreter()
+                TabsModel.create("MrGreen.agent", mrCode, makeActive = false, interpreter = mrInterp)
+                app.ensureAgentFor("MrGreen.agent")
+                Substrate.addFileToOrder("MrGreen.agent")
+            }
             if (Substrate.fileOrder.isEmpty()) {
                 Substrate.fileOrder = TabsModel.tabs.map { it.fileName }
             } else {
@@ -76,7 +87,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 when (kv[0].trim()) {
                     "autoSyncDeclarations" -> Substrate.autoSyncDeclarations = kv[1].trim() == "true"
                     "speedMs" -> Substrate.speedMs = kv[1].trim().toLongOrNull() ?: 400L
-                    "stepBackLimit" -> Substrate.stepBackLimit = kv[1].trim().toIntOrNull() ?: 12
                     "strictMode" -> Substrate.strictMode = kv[1].trim() == "true"
                     "valuesCollapsed" -> Substrate.valuesCollapsed = kv[1].trim() == "true"
                     "actionsCollapsed" -> Substrate.actionsCollapsed = kv[1].trim() == "true"
@@ -84,6 +94,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
                     "actionsWidth" -> Substrate.actionsWidthOverride = kv[1].trim().toFloatOrNull()?.dp
                     "logHeight" -> Substrate.logHeightOverride = kv[1].trim().toFloatOrNull()?.dp
                     "fileOrder" -> Substrate.fileOrder = kv[1].trim().split(",").filter { it.isNotBlank() }
+                    "lang" -> Strings.lang = kv[1].trim()
                 }
             }
         } catch (_: Exception) {}
@@ -91,17 +102,19 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun saveSettings() {
         try {
+            val activeAgent = app.viewingAgent()
             File(baseDir, "settings.txt").writeText(
                 "autoSyncDeclarations=${Substrate.autoSyncDeclarations}\n" +
                         "speedMs=${Substrate.speedMs}\n" +
-                        "stepBackLimit=${Substrate.stepBackLimit}\n" +
+                        "historyLimit=${activeAgent?.interpreter?.historyLimit ?: 100}\n" +
                         "strictMode=${Substrate.strictMode}\n" +
                         "valuesCollapsed=${Substrate.valuesCollapsed}\n" +
                         "actionsCollapsed=${Substrate.actionsCollapsed}\n" +
                         "valuesWidth=${Substrate.valuesWidthOverride?.value ?: ""}\n" +
                         "actionsWidth=${Substrate.actionsWidthOverride?.value ?: ""}\n" +
                         "logHeight=${Substrate.logHeightOverride?.value ?: ""}\n" +
-                        "fileOrder=${Substrate.fileOrder.joinToString(",")}\n"
+                        "fileOrder=${Substrate.fileOrder.joinToString(",")}\n" +
+                        "lang=${Strings.lang}\n"
             )
         } catch (_: Exception) {}
     }
@@ -307,6 +320,9 @@ class MainScreenSystem(private val app: MainScreenApp) {
         agent.status = Status.RUNNING
         agentJobs[agentId] = scope.launch {
             while (isActive) {
+                agent.interpreter.variables["speed"]?.toLongOrNull()?.let {
+                    agent.speedMs = it.coerceIn(0L, 5000L)
+                }
                 val w = agent.interpreter.waitUntilMs
                 if (w != null) {
                     val waitMs = w - System.currentTimeMillis()
@@ -316,11 +332,13 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         continue
                     }
                     agent.interpreter.waitUntilMs = null
+                    agent.interpreter.timeoutMs = null
                     agent.interpreter.setStatusPublic(Status.RUNNING)
                     agent.status = Status.RUNNING
                 }
                 if (agent.status != Status.RUNNING) break
                 val r = app.stepAgentInternal(agent.id) ?: break
+                withContext(Dispatchers.Main) { app.publishActive() }
                 if (r.status == Status.PAUSED || r.status == Status.FINISHED) break
                 if (r.errorLine != null) break
                 if (agent.speedMs > 0) delay(agent.speedMs) else yield()
@@ -329,6 +347,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 if (agent.status == Status.RUNNING) agent.status = Status.PAUSED
             }
             agent.interpreter.waitUntilMs = null
+            agent.interpreter.timeoutMs = null
             if (agent.waiter) {
                 agent.status = Status.PAUSED
             }
@@ -348,6 +367,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         agentJobs[agentId]?.cancel()
         agentJobs.remove(agentId)
         agent.interpreter.waitUntilMs = null
+        agent.interpreter.timeoutMs = null
         agent.interpreter.setStatusPublic(Status.STOPPED)
         agent.status = Status.STOPPED
         agent.lastPressed = "stop"
@@ -372,7 +392,9 @@ class MainScreenSystem(private val app: MainScreenApp) {
     fun stepAgent(agentId: Int): StepResult? {
         val agent = AgentsModel.byId(agentId) ?: return null
         if (agent.status == Status.RUNNING) return null
-        return app.stepAgentInternal(agentId)
+        val r = app.stepAgentInternal(agentId)
+        scope.launch(Dispatchers.Main) { app.publishActive() }
+        return r
     }
 
     fun stepBackAgent(agentId: Int): StepResult? {
@@ -380,6 +402,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         if (agent.status == Status.RUNNING) return null
         val r = agent.interpreter.executeStepBack() ?: return null
         app.applyResult(agent, r)
+        scope.launch(Dispatchers.Main) { app.publishActive() }
         return r
     }
 
@@ -416,6 +439,16 @@ class MainScreenSystem(private val app: MainScreenApp) {
     }
 
     fun switchAgentFile(agent: AgentState, target: String): Boolean {
+        val occupying = AgentsModel.agentFor(target)
+        if (occupying != null && occupying.id != agent.id) {
+            agent.interpreter.appendLog(
+                "occupied, 1, target=$target, agent=${occupying.name}", "error", agent.currentStep
+            )
+            agent.interpreter.results["error"] = "occupied"
+            agent.interpreter.results["error:message"] = "occupied, 1, target=$target, agent=${occupying.name}"
+            agent.status = Status.PAUSED
+            return false
+        }
         val tab = TabsModel.byFileName(target) ?: run {
             val file = projectDir?.let { File(it, target) } ?: File(baseDir, target)
             if (!file.exists()) { Substrate.log("File not found: $target"); return false }
@@ -428,7 +461,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
         agent.fileName = target
         agent.currentStep = 1
-        agent.interpreter.reset()
         Substrate.log("Agent ${agent.name} → $target")
         app.publishActive()
         return true
@@ -513,6 +545,59 @@ class MainScreenSystem(private val app: MainScreenApp) {
         Substrate.moveFileDown(fileName)
         saveSettings()
         app.publishActive()
+    }
+
+    // ---------- :simple ----------
+
+    fun simpleAction(action: String, arg: String?) {
+        scope.launch(Dispatchers.Main) {
+            when (action) {
+                "open" -> {
+                    if (arg != null) {
+                        val f = File(arg)
+                        val target = if (f.isAbsolute) f else File(projectDir ?: baseDir, arg)
+                        if (target.exists()) openFile(target)
+                        else Substrate.log("File not found: ${target.path}")
+                    }
+                }
+                "save" -> saveCurrent()
+                "saveAs" -> { if (arg != null) saveAs(File(arg)) }
+                "newCycle" -> newFile()
+                "newAgent" -> newAgent()
+                "openFolder" -> { if (arg != null) openFolder(File(arg)) }
+                "rename" -> {
+                    val t = TabsModel.active()
+                    if (t != null && arg != null) renameFile(t.fileName, arg)
+                }
+                "delete" -> {
+                    val t = TabsModel.active()
+                    if (t != null) { Substrate.log("Simple delete: ${t.fileName}"); deleteFileCascade(t.fileName) }
+                }
+                "reset" -> {
+                    val t = TabsModel.active()
+                    if (t != null) app.resetFile(t.fileName)
+                }
+                "close" -> {
+                    val t = TabsModel.active()
+                    if (t != null) { Substrate.log("Simple close: ${t.fileName}"); app.closeTab(TabsModel.activeIndex) }
+                }
+                "moveUp" -> { val t = TabsModel.active(); if (t != null) moveFileUp(t.fileName) }
+                "moveDown" -> { val t = TabsModel.active(); if (t != null) moveFileDown(t.fileName) }
+                "startAll" -> startAllAgents()
+                "pauseAll" -> pauseAllAgents()
+                "stopAll" -> { Substrate.log("Simple stopAll"); stopAllAgents() }
+                "stepAll" -> stepAllAgents()
+                "stepBackAll" -> stepBackAllAgents()
+                "settings" -> { Substrate.showSettingsDialog = true }
+                "about" -> { Substrate.showAboutDialog = true }
+                "samples" -> { Substrate.showSamplesDialog = true }
+                "activeTab" -> {
+                    val idx = arg?.toIntOrNull() ?: return@launch
+                    app.setActiveTab(idx - 1)
+                }
+                else -> Substrate.log("Unknown :simple:$action")
+            }
+        }
     }
 
     // ---------- save/load ----------

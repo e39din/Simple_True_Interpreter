@@ -22,6 +22,8 @@ class MainScreenCoreTest {
         Substrate.strictMode = false
         Substrate.fileOrder = emptyList()
         Substrate.clearLog()
+        Substrate.errorLines = emptySet()
+        Substrate.resolvedLines = emptySet()
         app = MainScreenApp()
     }
 
@@ -135,7 +137,7 @@ class MainScreenCoreTest {
     @Test fun `syncVariablesFromCode ignores math chains`() {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
-        tab.code = "a + 1 => :math => a"
+        tab.code = "a + 1 => :math"
         app.syncVariablesFromCode(force = true)
         assertFalse("math" in tab.interpreter.variables)
     }
@@ -156,6 +158,24 @@ class MainScreenCoreTest {
         tab.code = "0 = a"
         app.syncVariablesFromCode(force = false)
         assertEquals("5", tab.interpreter.variables["a"])
+    }
+
+    @Test fun `syncVariablesFromCode parses color container`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "#00cc22 = color"
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        assertEquals("#00cc22", tab.interpreter.variables["color"])
+    }
+
+    @Test fun `syncVariablesFromCode parses speed container`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "100 = speed"
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        assertEquals(100L, agent.speedMs)
     }
 
     // ---------- 4. deleteVariable ----------
@@ -270,13 +290,25 @@ class MainScreenCoreTest {
         assertTrue(ok)
     }
 
-    @Test fun `validateCurrent strict mode forbids colon`() {
+    @Test fun `validateCurrent strict mode forbids system function`() {
         app.ensureMainTab()
         Substrate.strictMode = true
         val tab = TabsModel.active()!!
-        tab.code = "a => :my:custom"
+        tab.code = "a => :math"
         val ok = app.validateCurrent()
         assertFalse(ok)
+        Substrate.strictMode = false
+    }
+
+    @Test fun `validateCurrent strict mode allows user file name`() {
+        app.ensureMainTab()
+        Substrate.strictMode = true
+        val tab = TabsModel.active()!!
+        // create a tab named "test.cycle" so tabExists("test") == true
+        TabsModel.create("test.cycle", "=> :stop", makeActive = false)
+        tab.code = "1 => :test"
+        val ok = app.validateCurrent()
+        assertTrue(ok, "user file name should be allowed in strict mode")
         Substrate.strictMode = false
     }
 
@@ -410,5 +442,49 @@ class MainScreenCoreTest {
         app.updateCode("5 = b", forceRename = true)
         assertEquals("5", tab.interpreter.variables["a"])
         assertEquals("5", tab.interpreter.variables["b"])
+    }
+
+    // ---------- 15. error lines / resolved lines ----------
+
+    @Test fun `error lines are reset on clear log`() {
+        Substrate.errorLines = setOf(1, 2)
+        Substrate.resolvedLines = setOf(3)
+        Substrate.clearLog()
+        assertTrue(Substrate.errorLines.isEmpty())
+        assertTrue(Substrate.resolvedLines.isEmpty())
+    }
+
+    @Test fun `validateCurrent adds error lines`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "^ nope"
+        app.validateCurrent()
+        assertTrue(Substrate.errorLines.isNotEmpty())
+    }
+
+    @Test fun `validateCurrent successful code clears errors`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "1 = a\n=> :stop"
+        app.validateCurrent()
+        assertTrue(Substrate.errorLines.isEmpty())
+    }
+
+    // ---------- 16. activeTab switch ----------
+
+    @Test fun `setActiveTab changes active`() {
+        app.ensureMainTab()
+        app.newTab()
+        val n = TabsModel.tabs.size
+        app.setActiveTab(0)
+        assertEquals(0, TabsModel.activeIndex)
+        assertEquals(n, TabsModel.tabs.size)
+    }
+
+    @Test fun `setActiveFile unknown is no-op`() {
+        app.ensureMainTab()
+        val before = TabsModel.activeIndex
+        app.setActiveFile("nonexistent.cycle")
+        assertEquals(before, TabsModel.activeIndex)
     }
 }

@@ -1,142 +1,137 @@
-# PROMPT — инструкции для AI-ассистента
+# PROMPT — instructions for AI assistant
 
-## Роль
+## Role
 
-Ты работаешь над **Simple True Interpreter** — интерпретатором языка **True**
-(Kotlin + Compose Desktop). Пакет `be.simple`, ядро — `be.true`.
+You work on the **Simple True Interpreter** — the interpreter of the **True** language (Kotlin + Compose Desktop). Package `be.simple`, core — `be.true`.
 
-## Источники правды
+## Sources of truth
 
-- **`LANGUAGE.md`** — полная спецификация языка True. **Читай перед любой
-  правкой интерпретатора.** Не дублируй её здесь.
-- **`README-TRUE.md`** — краткий вход для программиста.
-- **Код** — `true-core/` (интерпретатор), `composeApp/` (UI).
+- **`LANGUAGE.md`** — full spec of the True language. **Read before any change to the interpreter.** Do not duplicate it here.
+- **`FUNCTIONS.md`** — system functions reference.
+- **`SAMPLES.md`** — examples.
+- **Code** — `true-core/` (interpreter), `composeApp/` (UI).
 
-## Терминология
+## Terminology
 
-- **Контейнер** — строка данных (бывшая «строка данных»).
-- **Именованный контейнер** — контейнер с именем (`value = name`).
-- **Цикл (cycle)** — файл `.cycle` (файл-функция).
-- **Агент (agent)** — файл `.agent` (файл-функция + UI-кнопки агента).
-- **`.true`** — **больше не используется** (зарезервировано для настроек
-  проекта в будущем).
+- **Container** — a string of data.
+- **Named container** — a container with a name (`value = name`).
+- **Cycle** — a `.cycle` file (a file-function).
+- **Agent** — a `.agent` file (a file-function + agent UI buttons).
+- **`.true`** — **no longer used** (reserved for project settings).
 
-## Ключевая модель
+## Key model
 
-1. **Всё — функция с `:`.** Системные (`:math`, `:data:*`, `:json:*`,
-   `:file:*`, `:api:*`, `:console`, `:save`, `:load`, `:size`, `:s`,
-   `:get`, `:post`, `:log`, `:message`, `:result`, `:parameters`,
-   `:range`, `:repeat`, `:error`, `:agent:*`, `:run`) и пользовательские
-   (`:filename` — файл `filename.cycle` / `filename.agent`).
-   **Системные имена зарезервированы.**
-2. **`:result`** — хранит, **не возвращает**. `=> :result` — установка.
-   `:result` — маркер конца файла. Waiter — авто по наличию `:result`.
-3. **`:parameters`** — всегда системная. Вход функции.
-4. **`:instruction`** — **удалён**. Агент сам знает текущую строку. `:run`
-   (без аргументов) — выполняет текущую строку. `:log` (без аргументов) —
-   логирует текущую строку.
-5. **`actions`** — `":run"` по умолчанию (без `:instruction`).
-6. **Интерпретатор двигает агента**, агент исполняет `actions`.
-7. **Запись/чтение — симметрично** (кроме `@`-констант).
-8. **`file:a => file:b`** — копия содержимого, **`->`** — перемещение.
-   **`->|`** — вставка (перемещением), **`=>|`** — вставка (копированием).
-9. **`:data:insert`, `:data:set`, `:data:length`** — deprecated (заменены
-   `->|`, `->`, `:data:y:size` / `:s`).
-10. **`.cycle`** — цикл (файл-функция). **`.agent`** — агент. **`.true`** —
-    больше нет. Любое расширение — агент может ходить по любому файлу.
-11. **Пустота — `""` (0 символов).** Литерал `""` — 2 символа. Ошибки —
-    явные (`errorLine` → `PAUSED`).
-12. **Вертикальные файлы** — ось Y для файлов (`fileOrder`). Кнопки `↑`/`↓`
-    в линии кнопок файла.
-13. **`:error` — стек ошибок файла.** `:error`, `:error:line`,
-    `:error:message`, `:error:lines`, `:error:messages`. Реакция — `actions`:
-    `":error ? ^ :handle"`. `:error` не отменяет `PAUSED`.
-14. **`foreach` без `.`.** Конец тела — отсутствие `,` в конце строки.
-15. **Префикс `:data`/`:math` необязателен.** `:sum`, `:pop`, `:size`, `:s`.
-    `:math:sort` (числа) — обязателен.
-16. **Цепочки `=>`.** `a => :f => :g => dst` — левая ассоциативность.
-17. **Имя до использования.** `= name` или `value = name` — **до**
-    `:f => name`. **Исключение:** имя уже переменная — `= name` не нужно.
-18. **Примеры — в середине цикла.** `SAMPLES.md` не содержит `=> :stop`.
-19. **`^` — переход.** `^ N` (число → строка), `^ :stop` / `:pause` /
-    `:resume` / `:delete` / `:reset` (команды агенту), `^ label` (метка),
-    `^ file.cycle` / `^ file.agent` / `^ data.txt` (файл, **с точкой**).
-    `^ notes` (без точки) — **ошибка**.
-20. **Контейнеры агента:** `step` (номер строки) и `cycle` (имя файла).
-    Дублирующие `:agent:main:currentFile` / `:agent:main:currentStep` —
-    **удалены**.
-21. **1 агент на файл — снято.** Несколько `.agent` — несколько агентов.
-    `MAX_AGENTS` — **удалён**. Порядок движения — по Y (сверху вниз).
-22. **UI:** кнопки **файла** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — сверху, для
-    **всех** файлов. Кнопки **агента** (`▶⏸⏹⏭⏮`) — снизу, **только** для
-    `.agent`. `⋯` — **удалён** (всё в линии). `Templates…`, `Actions…`,
-    `Copy to…`, `Move to…`, `Delete agent` — **удалены**.
-23. **`:agent:main => file:other` / `-> file:other` / `-> nothing`** —
-    **удалены**. Агент перемещается только `^`.
-24. **`:agent:main => :stop` / `:pause` / `:resume` / `:delete`** — **удалены**,
-    заменены на `^ :stop` / `:pause` / `:resume` / `:delete`. **`^ :reset`** —
-    новое.
-25. **Оставлены:** `:agent:main:status` / `:agent:main:waiter` /
-    `:agent:status` / `<ms> => :agent:wait`.
+1. **Everything is a function with `:`.** System (`:math`, `:data:*`, `:json:*`, `:file:*`, `:api:*`, `:console`, `:save`, `:load`, `:size`, `:s`, `:get`, `:post`, `:log`, `:message`, `:result`, `:parameters`, `:range`, `:repeat`, `:error`, `:agent:*`, `:run`, `:map`, `:reduce`, `:fold`, `:each`, `:simple:*`) and user (`:filename` — file `filename.cycle` / `filename.agent`). **System names are reserved.**
+2. **`:result`** — stores, **does not return**. `=> :result` — set. `:result` — end marker. Waiter — auto.
+3. **`:parameters`** — always system. Entry of the function.
+4. **`:instruction`** — **removed**. `:run` (no args) executes the current line.
+5. **`actions`** — `":run"` by default.
+6. **Interpreter moves the agent**, agent executes `actions`.
+7. **Read/write is symmetric** (except `@`-constants).
+8. **`file:a => file:b`** — copy, **`->`** — move. **`->|`** — insert (move), **`=>|`** — insert (copy).
+9. **`:data:insert`, `:data:set`, `:data:length`** — deprecated.
+10. **`.cycle`** — cycle. **`.agent`** — agent. **`.true`** — no longer used. Any extension — agent can jump.
+11. **Empty — `""` (0 chars).** Literal `""` — 2 chars. Errors — explicit (`errorLine` → `PAUSED`).
+12. **Vertical files** — Y axis for files (`fileOrder`). Buttons `↑` / `↓` in the file button row.
+13. **`:error` — error stack.** Format `<code>, <1|0>, <details>` (1 — active, 0 — resolved). `:error`, `:error:line`, `:error:message`, `:error:lines`, `:error:messages`, `:error:resolve`.
+14. **`:each` replaces `:foreach`.** `:map` / `:reduce` / `:fold` / `:each` — new.
+15. **Prefix `:data` / `:math` is optional.** `:sum`, `:pop`, `:size`, `:s`. `:math:sort` (numbers) — mandatory.
+16. **Chains `=>`.** `a => :f => :g = dst` — left-associative.
+17. **Name before use.** `= name` or `value = name` — **before** `:f = name`. **Exception:** name is already a variable — `= name` not needed.
+18. **Examples — in the middle of a loop.** `SAMPLES.md` does not contain `=> :stop`.
+19. **`^` — jump.** `^ N` (number → line), `^ :stop` / `:pause` / `:resume` / `:delete` / `:reset` (commands), `^ label` (label), `^ file.cycle` / `^ file.agent` / `^ data.txt` (file, **with dot**). `^ notes` (no dot) — **error**.
+20. **Agent containers:** `step`, `cycle`, `speed`, `color`.
+21. **1 agent per file — removed.** Multiple `.agent` — multiple agents. Order — by Y.
+22. **UI:** file buttons (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, all files. Agent buttons (`▶⏸⏹⏭⏮`) — bottom, only `.agent`. `⋯` — **removed**. `NavigateBehavior` — **removed**.
+23. **`:agent:main => file:other` / `-> file:other` / `-> nothing`** — **removed**.
+24. **`:agent:main => :stop` / `:pause` / `:resume` / `:delete`** — **removed**, replaced by `^ :stop` / `:pause` / `:resume` / `:delete`. **`^ :reset`** — new.
+25. **Left:** `:agent:main:status` / `:agent:main:waiter` / `:agent:status` / `<ms> => :agent:wait` / `<ms>, <timeout> => :agent:wait:timeout`.
+26. **`=>` is never naming.** `chain => name` — error if `name` is not declared. Naming — only `= name`.
+27. **Substitution of named containers.** Name in operation position — substituted and executed.
+28. **`:math`, `:data:*`, `:error`, `:json:*`, `:file:*`, `:api:*`** — result **already** in `results[...]`. To name — `= name` separately, or `:math = name`.
+29. **`:simple:*`** — 21 interpreter functions, async, result in `results["simple"] = "1"`.
+30. **Escaping** — `\ ` (line literal), `\,` / `\;` / `\.` (single separator).
+31. **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
+32. **Modules and imports are not needed.** Any file can be opened from code.
+33. **Settings** — `:historyLimit` (100), `:logLimit` (1000), `:strictMode` (0), `:autoSync` (1).
+34. **`:stack:peek`** — top element without removal.
+35. **`MrGreen.agent`** — first start, `#00cc22 = color`.
 
-## Принципы работы
+## Language docs format
 
-1. **Язык — контейнеры.** Всё есть контейнер (0 символов — пустой).
-2. **Имена функций — с `:`.** Без `:` — не функция.
-3. **`=>` копирует, `->` перемещает.**
-4. **Оси `l/x/y/z`.** Явная ось — работаем по ней; не указана — `x`.
-   Исключение: `substring`/`replace`/`chars` — только `x`.
-5. **`nothing` — сток.**
-6. **Программа — цикл + switch.**
-7. **Программа меняет себя.** `syncCodeWithVariables`.
-8. **Агенты исполняют программу.** 1 `.agent` = 1 агент.
-9. **Наглядность > инкапсуляция.**
-10. **Ясность > краткость.**
-11. **Файл = хранилище + функция.** `:parameters` (вход), `:result` (выход).
-12. **Если данные есть — с ними можно работать.**
+- **All docs in English** (`LANGUAGE.md`, `FUNCTIONS.md`, `SAMPLES.md`, `README.md`, `README-TRUE.md`, `ROADMAP.md`).
+- `CHANGELOG.md` — history, new entries in English.
+- `PROMPT.md` — instructions (Russian acceptable), rule «all docs in English».
+- **FUNCTIONS.md format:**
+    - **Description** — one sentence.
+    - **True** — the sample. The result is in `results[...]`.
+    - **Inline comment** (only if True is 1 line **and** py/random are 1-line operations):
+        - **short** — `\ py: \`...\` | <random>: \`...\`` (same line)
+        - **long** — `\ py: \`...\`` on the **next line**
+        - **2+ operations** or **multi-line** in py/random — comment omitted.
+        - **random** — not py/rust/bash.
+        - **no imports**.
+    - **`<details>`** — 12 languages (Python, Rust, Bash, Elixir, C, Kotlin, Haskell, Lua, Erlang, JavaScript, Go, Clojure).
+    - **No Datalog.**
 
-## Правила промпта (обязательно)
+## Working principles
 
-- **Все изменения UI — согласовать с дизайнером.** Цвета, иконки, расположение
-  кнопок, панелей, диалогов — **до** реализации.
-- **Обновлять документацию и примеры кода при каждом изменении языка.**
-  `LANGUAGE.md`, `README-TRUE.md`, `SAMPLES.md`, `PROMPT.md`, `CHANGELOG.md`,
-  `ROADMAP.md` — **синхронно**.
-- **Валидация MD перед выдачей:** нет обрывов ```, таблицы целы, ссылки
-  существуют, `LANGUAGE.md` ↔ `README-TRUE.md` согласованы.
-- **Приоритет простых операций:** если вариант на `=>`/`->`/`=`/`^`/`?`
-  примерно равен по размеру варианту со спец.функцией — выбирай простой.
-- **Если пользователь просит файл — выдавай одним блоком, удобным для
-  копирования.**
-- **Все изменения языка — сначала блоки (план), потом код.**
+1. **Language is containers.** Everything is a container (0 chars — empty).
+2. **Function names — with `:`.** Without `:` — not a function.
+3. **`=>` copies, `->` moves.** **`=>` is never naming.**
+4. **Axes `l/x/y/z`.** Explicit axis — by it; not specified — `x`. Exception: `substring` / `replace` / `chars` — only `x`.
+5. **`nothing` — sink.**
+6. **Program is a loop + switch.**
+7. **Program changes itself.** `syncCodeWithVariables`.
+8. **Agents execute the program.** 1 `.agent` = 1 agent.
+9. **Visual clarity > encapsulation.**
+10. **Clarity > brevity.**
+11. **File = storage + function.** `:parameters` (in), `:result` (out).
+12. **If data exists — you can work with it.**
 
-## Что НЕ делать
+## Prompt rules (mandatory)
 
-- Не вводить числа/типы/массивы как сущности — только контейнеры и оси.
-- Не добавлять `for`/`while` — только неявный цикл + `^` + `?`.
-- Не дублировать `LANGUAGE.md` в этом файле — ссылайся.
-- Не менять `PROMPT.md` без явной просьбы пользователя.
-- Не возвращать «свойства» — только функции с `:`.
-- Не использовать `.true` — только `.cycle` / `.agent`.
-- Не использовать «строка данных» — только «контейнер».
+- **All UI changes — coordinate with the designer.** Colors, icons, button placement, panels, dialogs — **before** implementation.
+- **Update documentation and examples on every language change.** `LANGUAGE.md`, `FUNCTIONS.md`, `SAMPLES.md`, `README.md`, `README-TRUE.md`, `ROADMAP.md`, `CHANGELOG.md` — **synchronously**.
+- **Validate MD before output:** no broken ```, tables intact, links exist.
+- **Priority of simple operations:** if a variant with `=>` / `->` / `=` / `^` / `?` is roughly equal to a variant with a special function — choose simple.
+- **If the user asks for a file — output as one block convenient for copying.**
+- **All language changes — first blocks (plan), then code.**
+- **When doing a task — output the result as a short table.** Questions — also as a short table.
+- **Don't output the code** until all steps are complete. Output the full code at the end when all tasks are done.
+- **`FUNCTIONS.md` format:** description + True + inline (only if 1-line) + `<details>` (12 languages, no Datalog).
 
-## Структура проекта
+## What NOT to do
+
+- Do not introduce numbers/types/arrays as entities — only containers and axes.
+- Do not add `for` / `while` — only implicit loop + `^` + `?`.
+- Do not duplicate `LANGUAGE.md` in this file — reference it.
+- Do not change `PROMPT.md` without explicit user request.
+- Do not return "properties" — only functions with `:`.
+- Do not use `.true` — only `.cycle` / `.agent`.
+- Do not use "data string" — only "container".
+- Do not use `=>` for naming — only `= name`.
+- Do not include imports in examples.
+- Do not add Datalog to `FUNCTIONS.md`.
+
+## Project structure
 
 ```
-true-core/          — интерпретатор (Kotlin, без UI)
-  Interpreter.kt    — парсинг, выполнение, подстановка, math, data, foreach
+true-core/          — interpreter (Kotlin, no UI)
+  Interpreter.kt    — parsing, execution, substitution, math, data, functional
   JsonParser.kt     — JSON
-  OsApi.kt          — ОС (файлы, процессы)
+  OsApi.kt          — OS (files, processes)
   ServerApi.kt      — HTTP/WS
 composeApp/         — UI (Compose Desktop)
-  Substrate.kt      — общее состояние (TabState, AgentState, FileKind)
+  Substrate.kt      — shared state (TabState, AgentState, FileKind)
   MainScreen_*.kt   — App/User/System/Server
-  PROMPT.md, LANGUAGE.md, README-TRUE.md, README.md,
+  TrueHighlighter.kt, Strings*.kt — syntax highlight, localization
+  PROMPT.md, LANGUAGE.md, FUNCTIONS.md, README-TRUE.md, README.md,
   CHANGELOG.md, SAMPLES.md, ROADMAP.md
 ```
 
-## Тон
+## Tone
 
-- Кратко, по делу, без воды.
-- Если баг — сначала диагностика, потом патч.
-- Если не уверен — спроси.
+- Concise, to the point, no fluff.
+- If bug — first diagnosis, then patch.
+- If unsure — ask.

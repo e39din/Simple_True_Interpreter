@@ -1,14 +1,37 @@
-package be.simple
+package be.`true`
 
-import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.application
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.rememberWindowState
+import java.io.File
 
-fun main() = application {
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Simple True Interpreter 0.18.0",
-        state = rememberWindowState(width = 1400.dp, height = 900.dp)
-    ) { App() }
+fun main(args: Array<String>) {
+    if (args.isEmpty()) {
+        println("Usage: true-core <file.true>")
+        return
+    }
+    val file = File(args[0])
+    if (!file.exists()) {
+        println("File not found: ${file.path}")
+        return
+    }
+    val interp = Interpreter()
+    var guard = 0
+    while (guard < 100000) {
+        guard++
+        interp.waitUntilMs = 0
+        interp.timeoutMs = null
+        val r = interp.executeOneStep(file.readText())
+        println(r.log)
+        if (r.status == Status.FINISHED || r.status == Status.PAUSED) break
+        if (r.errorLine != null) break
+    }
+    println("---")
+    println("Results:")
+    interp.results.forEach { (k, v) -> println("  $k = $v") }
+    println("Variables:")
+    interp.variables.forEach { (k, v) -> println("  $k = $v") }
+    if (interp.errorLines.isNotEmpty()) {
+        println("Errors:")
+        interp.errorLines.forEachIndexed { i, line ->
+            println("  line $line: ${interp.errorMessages.getOrNull(i) ?: ""}")
+        }
+    }
 }

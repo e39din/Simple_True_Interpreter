@@ -1,36 +1,32 @@
-# Simple True Interpreter 1.2.0
+# Simple True Interpreter 1.1.0
 
-Кроссплатформенный интерпретатор языка True (Kotlin + Compose).
+Cross-platform interpreter for the **True** language (Kotlin + Compose).
 
-## Что такое True
+## What is True
 
-**True** — минималистичный язык, где всё — контейнер. Нет чисел, типов,
-массивов. Только контейнеры и соглашения о них.
+**True** is a minimalist language where everything is a container. No numbers, types, or arrays. Only containers and conventions over them.
 
-### 5 принципов
+### 5 principles
 
-1. **Всё — контейнер.** `"Hello"` — 7 символов (с кавычками), `Hello` — 5.
-   Пустой контейнер — 0 символов (не `""`).
-2. **Именование (не присваивание).** `данные = имя` — имя справа ссылается на
-   данные слева. Изменение значения по имени меняет текст программы.
-3. **`=>` копирует, `->` перемещает.** `->` стирает источник, имя остаётся.
-4. **Оси `l/x/y/z`** — структура контейнера. По умолчанию `x`.
-5. **`nothing` — универсальный сток.** `file:x -> nothing`,
-   `<var> -> nothing`.
+1. **Everything is a container.** `"Hello"` — 7 chars (with quotes), `Hello` — 5. Empty container — 0 chars (not `""`).
+2. **Naming, not creating.** `data = name` gives the name `name` to the value `data`. `=>` is never naming. Changing a value by name changes the program text.
+3. **`=>` copies, `->` moves.** `->` clears the source, the name stays.
+4. **Axes `l/x/y/z`** — structure of a container. Default axis — `x`.
+5. **`nothing` — universal sink.** `file:x -> nothing`, `<var> -> nothing`.
 
-### 6 конструкций
+### 6 constructs
 
-| Конструкция | Синтаксис |
+| Construct | Syntax |
 |---|---|
-| Именование | `данные = имя` / `= имя` / `данные = имя *` / `данные = имя @` |
-| Метка / переход | `= label` / `^ N` / `^ label` / `^ file.cycle` / `^ :stop` |
-| Условие | `условие ? операция` (скобки, `&&`/`||`/`!`) |
-| Копирование / перемещение | `a => b` / `a -> b` / `v ->\| data:y:3` / `v =>\| data:y:3` |
-| Команды | `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` / `^ :reset` |
-| Функции | `<данные> => :<fn>` (все имена — с `:`) |
-| Имя до использования | `= name` (пустой контейнер) / `value = name` — **до** `:f => name` |
+| Naming | `data = name` / `= name` / `data = name *` / `data = name @` |
+| Label / jump | `= label` / `^ N` / `^ label` / `^ file.cycle` / `^ :stop` |
+| Condition | `condition ? operation` (parentheses, `&&` / `\|\|` / `!`) |
+| Copy / move | `a => b` / `a -> b` / `v ->\| data:y:3` / `v =>\| data:y:3` |
+| Commands | `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` / `^ :reset` |
+| Functions | `<data> => :<fn>` (all names — with `:`) |
+| Name before use | `= name` (empty container) / `value = name` — **before** `:f = name` |
 
-### 1 пример
+### 1 example
 
 ```true
 0 = a
@@ -39,91 +35,80 @@
 
 = do
 
-a + 1 => :math => a
+a + 1 => :math
+:math = a
 a < max ? ^ do
 
 => :stop
 ```
 
-### Функции (кратко)
+### Functions (brief)
 
 `:math` (`:sum`, `:min`, `:max`, `:avg`, `:product`, `:count`, `:math:sort`),
-`:data:*` (`:push`, `:pop`, `:size`, `:s`, `:sort`, ...), `:json:*`, `:file:*`,
-`:api:*`, `:console`, `:run`, `:save`, `:load`, `:get`, `:post`, `:log`,
-`:message`, `:result`, `:parameters`, `:range`, `:repeat`, `:error`,
-`:agent:*`.
+`:data:*` (`:push`, `:pop`, `:size`, `:s`, `:sort`, ...), `:map` / `:reduce` / `:fold` / `:each`,
+`:json:*`, `:file:*`, `:api:*`, `:console`, `:run`, `:save`, `:load`, `:get`, `:post`,
+`:log`, `:message`, `:result`, `:parameters`, `:range`, `:repeat`, `:error`, `:agent:*`, `:simple:*`.
 
-Подробности — `LANGUAGE.md`. Примеры — `SAMPLES.md`.
+Details — `FUNCTIONS.md`. Examples — `SAMPLES.md`.
 
-## Приложение
+## Application
 
-- Меню `File` / `Run` / `Settings` / `About`.
-- Пошаговый режим вперёд/назад (история до 12).
-- Автоцикл с настраиваемой скоростью.
-- Редактор с нумерацией, подсветкой текущей строки, зеброй, выделением мышью.
-- Values: контейнеры + скрытые + результаты.
-- Log: внизу, новые сверху, фильтры (`Messages`).
-- Actions: справа, поиск, описание, копирование по клику, Pin (правый клик),
-  свёрнутая.
-- Файлы: `.cycle` (цикл), `.agent` (агент), `.txt` / `.json` / без расширения.
-- Агенты: 1 `.agent` = 1 агент. Несколько `.agent` — несколько агентов.
-- `Cycles` — вертикальные ряды (`fileOrder`), `↑` / `↓` в линии кнопок файла.
-- Поиск/замена (`Ctrl+F` / `Ctrl+R`).
-- Подсветка активной кнопки агента (`lastPressed`).
-- Расширяемый редактор (до половины экрана).
-- `foreach` без `.` — конец тела по отсутствию `,`.
-- Префикс `:data`/`:math` необязателен — `:sum`, `:pop`, `:size`, `:s`.
-- `:error` — стек ошибок файла, реакция через `actions`.
-- `^ N` / `^ label` / `^ file.cycle` / `^ :stop` / `:pause` / `:resume` /
-  `:delete` / `:reset`.
-- Контейнеры агента: `step` (номер строки), `cycle` (имя файла).
-- `lastPressed` — подсветка активной кнопки агента.
-- `ActionsPanel` — копирование по клику, поиск, описание, Pin, свёрнутая.
-- Сохранение состояния панелей.
-- Ренейминг переменных (diff + Ctrl).
-- Values при изменении кода (Q9).
-- Цепочки `=>` — `a => :f => :g => dst`.
-- Имя до использования (`= name`).
+- Menu `File` / `Run` / `Settings` / `About`.
+- Step-by-step forward/backward (history up to 100).
+- Auto-loop with configurable speed.
+- Editor with line numbers, current-line highlight, zebra, mouse selection.
+- Values: containers + hidden + results.
+- Log: bottom, newest on top, filters (`Messages`).
+- Actions: right, search, description, copy on click, Pin (right click), collapsed.
+- Files: `.cycle` (cycle), `.agent` (agent), `.txt` / `.json` / no extension.
+- Agents: 1 `.agent` = 1 agent. Multiple `.agent` — multiple agents.
+- `Cycles` — vertical rows (`fileOrder`), `↑` / `↓` in the file button row.
+- Search / replace (`Ctrl+F` / `Ctrl+R`).
+- Highlight of the active agent button (`lastPressed`).
+- Expandable editor (up to half of the screen).
+- `:map` / `:reduce` / `:fold` / `:each` — functional operations.
+- `:stack:peek` — top element without removal.
+- `:error` — error stack, format `<code>, <1|0>, <details>`, `:error:resolve`.
+- `^ N` / `^ label` / `^ file.cycle` / `^ :stop` / `:pause` / `:resume` / `:delete` / `:reset`.
+- Agent containers: `step`, `cycle`, `speed`, `color`.
+- `MrGreen.agent` — first start.
+- EN UI + RU localization (Settings → Language).
+- `:simple:*` — 21 interpreter functions.
 
-### Кнопки
+### Buttons
 
-**Кнопки файла** (сверху, для всех файлов): `⟲` (Reset), `↑` / `↓`
-(Move up/down), `✎` (Rename), `🗑` (Delete), `⛶` (Expand).
+**File buttons** (top, all files): `⟲` (Reset), `↑` / `↓` (Move up/down), `✎` (Rename), `🗑` (Delete), `⛶` (Expand).
 
-**Кнопки агента** (снизу, только `.agent`): `▶` (Play), `⏸` (Pause),
-`⏹` (Stop), `⏭` (Step), `⏮` (Step Back).
+**Agent buttons** (bottom, only `.agent`): `▶` (Play), `⏸` (Pause), `⏹` (Stop), `⏭` (Step), `⏮` (Step Back).
 
-### Горячие клавиши
+### Hotkeys
 
-- `Ctrl+F` — поиск.
-- `Ctrl+R` — замена.
+- `Ctrl+F` — search.
+- `Ctrl+R` — replace.
 - `Ctrl+P` — play/pause (toggle).
-- `Ctrl+↑` / `Ctrl+↓` — шаг назад / вперёд (все агенты).
+- `Ctrl+↑` / `Ctrl+↓` — step back / forward (all agents).
 - `Ctrl+Z` / `Ctrl+Shift+Z` — undo / redo.
 
-### Чего нет и не будет
+### What we don't have and won't have
 
-- **Компиляции.** True — интерпретатор. Код меняет себя на лету
-  (`syncCodeWithVariables`), пошаговый режим, `actions` агента — всё это
-  требует интерпретации. Компиляция — вчерашний день.
-- **Типов.** Всё — контейнер. Оси `l/x/y/z` — единственная структура.
-- **`for` / `while`.** Только неявный цикл + `^` + `?`.
-- **Классов / ООП.** Файлы-функции, агенты, `actions`.
-- **Многопоточности с общей памятью.** Агенты — изолированные корутины.
-- **`.true`.** Больше нет (зарезервировано для настроек проекта).
+- **Compilation.** True is an interpreter. Code changes itself on the fly (`syncCodeWithVariables`), step-by-step mode, agent `actions` — all of that requires interpretation.
+- **Types.** Everything is a container. Axes `l/x/y/z` — the only structure.
+- **`for` / `while`.** Only the implicit program loop + `^` + `?`.
+- **Classes / OOP.** File-functions, agents, `actions`.
+- **Multithreading with shared memory.** Agents are isolated coroutines.
+- **`.true`.** No longer used (reserved for project settings).
+- **Modules / imports.** Any file can be opened from code — `:file:read` / `^ file.cycle` / `:file_name`.
 
-Подробности — `ROADMAP.md`, раздел «Чего не будем делать».
+Details — `ROADMAP.md`.
 
-## Файлы
+## Files
 
-`~/.simple/main.cycle` — первый файл, `~/.simple/start.cycle` — стартовое
-состояние, остальные — пользовательские. `.agent` — агенты. `.true` — больше
-нет.
+`~/.simple/main.cycle` — first file, `~/.simple/start.cycle` — start state, others — user files. `.agent` — agents. `.true` — no longer used.
 
-## Сборка
+## Build
 
 JDK 21. `./gradlew :composeApp:run`.
 
-## Версия
+## Version
 
-1.2.0 (язык 0.10.0).
+1.1.0 (language 0.11.0).

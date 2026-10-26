@@ -4,9 +4,15 @@ import kotlin.collections.get
 
 object JsonParser {
 
-    private val parseCache = mutableMapOf<String, Any?>()
-    private val namesCache = mutableMapOf<String, List<String>>()
-    private val valuesCache = mutableMapOf<String, List<String>>()
+    private val parseCache = object : LinkedHashMap<String, Any?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any?>?): Boolean = size > 100
+    }
+    private val namesCache = object : LinkedHashMap<String, List<String>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>?): Boolean = size > 100
+    }
+    private val valuesCache = object : LinkedHashMap<String, List<String>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>?): Boolean = size > 100
+    }
 
     fun parse(text: String): Any? = parseCache.getOrPut(text) { parseUncached(text) }
 
