@@ -12,6 +12,13 @@ import be.`true`.Error
 import be.`true`.Interpreter
 import be.`true`.LogEntry
 import be.`true`.Status
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStream
+import java.nio.charset.StandardCharsets
 
 data class TemplateGroup(val title: String, val color: Color, val templates: List<String>)
 
@@ -149,6 +156,86 @@ object AgentsModel {
     }
 }
 
+object TerminalModel {
+    data class TerminalSession(
+        val id: Int,
+        val title: String,
+        val process: Process,
+        val stdin: OutputStream,
+        val stdout: BufferedReader,
+        val stderr: BufferedReader,
+        var output: String = "",
+        var input: String = "",
+        var alive: Boolean = true,
+        var running: Boolean = false
+    )
+
+    val sessions: SnapshotStateList<TerminalSession> = mutableStateListOf()
+    private var counter = 1
+
+    fun open(title: String, scope: CoroutineScope): TerminalSession {
+        val isWin = System.getProperty("os.name").lowercase().contains("win")
+        val shell = if (isWin) listOf("cmd.exe") else listOf("/bin/sh", "-c", "exec bash 2>/dev/null || exec sh")
+        val proc = ProcessBuilder(shell).redirectErrorStream(false).start()
+        val stdin = proc.outputStream
+        val stdout = BufferedReader(InputStreamReader(proc.inputStream, StandardCharsets.UTF_8))
+        val stderr = BufferedReader(InputStreamReader(proc.errorStream, StandardCharsets.UTF_8))
+        val session = TerminalSession(counter++, title, proc, stdin, stdout, stderr)
+        sessions += session
+        scope.launch(Dispatchers.IO) {
+            while (session.alive) {
+                val line = try { session.stdout.readLine() } catch (_: Exception) { null } ?: break
+                session.output += line + "\n"
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            while (session.alive) {
+                val line = try { session.stderr.readLine() } catch (_: Exception) { null } ?: break
+                session.output += line + "\n"
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            try { proc.waitFor() } catch (_: Exception) {}
+            session.alive = false
+        }
+        return session
+    }
+
+    fun byTitle(title: String): TerminalSession? = sessions.firstOrNull { it.title == title }
+    fun byId(id: Int): TerminalSession? = sessions.firstOrNull { it.id == id }
+
+    fun close(id: Int) {
+        val s = byId(id) ?: return
+        s.alive = false
+        try { s.process.destroy() } catch (_: Exception) {}
+        sessions.removeAll { it.id == id }
+    }
+
+    fun closeAll() {
+        sessions.toList().forEach { close(it.id) }
+    }
+}
+
+data class SnackbarMessage(
+    val id: Int,
+    val text: String,
+    val kind: String = "warning",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+object SnackbarModel {
+    val messages: SnapshotStateList<SnackbarMessage> = mutableStateListOf()
+    private var counter = 1
+
+    fun show(text: String, kind: String = "warning") {
+        if (messages.size >= 3) messages.removeAt(0)
+        messages += SnackbarMessage(counter++, text, kind)
+    }
+
+    fun dismiss(id: Int) { messages.removeAll { it.id == id } }
+    fun clear() { messages.clear() }
+}
+
 object Substrate {
     val DEFAULT_CODE = """
         0 = a
@@ -157,7 +244,8 @@ object Substrate {
 
         = do
 
-        a + 1 => :math => a
+        a + 1 => :math
+        :math = a
         a < max ? ^ do
 
         => :stop
@@ -195,7 +283,7 @@ object Substrate {
             "1, 2, 3, 4, 5 => :max", "1, 2, 3, 4, 5 => :avg",
             "1, 2, 3, 4, 5 => :product", "1, 2, 3, 4, 5 => :count",
             "5, 3, 8, 1, 9 => :sort",
-            ":math = result", "a + 1 => :math => a")),
+            "a + 1 => :math => a")),
         TemplateGroup("Data — string", Color(0xFFC8E6C9), listOf(
             "data, start, end => :data:substring",
             "data, sub => :data:indexOf",
@@ -286,7 +374,9 @@ object Substrate {
             ":run", ":log",
             "message => :message",
             ":error ? ^ :handle",
-            "1 => :error:resolve")),
+            "0 => :error:resolve",
+            "a == b, \"msg\" => :assert",
+            ":pauseAll", ":resumeAll")),
         TemplateGroup("Error", Color(0xFFFFEBEE), listOf(
             ":error => dst", ":error:line => dst",
             ":error:message => dst", ":error:lines => dst",
@@ -306,6 +396,29 @@ object Substrate {
             "0 = lineCount",
             "#00cc22 = color",
             "100 = speed")),
+        TemplateGroup("Simple — UI", Color(0xFFE8EAF6), listOf(
+            "button:startAll => :simple:click",
+            "button:pauseAll => :simple:click",
+            "button:newCycle => :simple:click",
+            "button:save => :simple:click",
+            "tab:main.cycle => :simple:click",
+            "agent:agent-1:play => :simple:click",
+            "agent:agent-1:pause => :simple:click",
+            "100, 200 => :simple:clickAt",
+            "hello, editor:current => :simple:type",
+            "hello, editor:current, 100 => :simple:type")),
+        TemplateGroup("Simple — Terminal", Color(0xFFE0F2F1), listOf(
+            "Console => :simple:openTerminal",
+            "ls -la, Console => :simple:sendTerminal",
+            "hello, Console => :simple:typeTerminal",
+            "Console => :simple:closeTerminal")),
+        TemplateGroup("Simple — Search", Color(0xFFF1F8E9), listOf(
+            "hello => :simple:search",
+            ":simple:search:count => :log",
+            ":simple:search:current => :log",
+            ":simple:search:next",
+            ":simple:search:prev",
+            ":simple:search:clear")),
         TemplateGroup("Other", Color(0xFFF3E5F5), listOf(
             "1 => :activeTab", "1, 5 => :activeTab", "\\ literal string"))
     )

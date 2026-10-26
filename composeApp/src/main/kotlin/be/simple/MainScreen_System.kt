@@ -15,7 +15,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Robot
+import java.awt.event.InputEvent
 import java.io.File
+import java.nio.charset.StandardCharsets
 import javax.swing.JFileChooser
 
 class MainScreenSystem(private val app: MainScreenApp) {
@@ -595,9 +598,234 @@ class MainScreenSystem(private val app: MainScreenApp) {
                     val idx = arg?.toIntOrNull() ?: return@launch
                     app.setActiveTab(idx - 1)
                 }
+
+                // ---------- :simple:click ----------
+                "click" -> if (arg != null) {
+                    val parts = arg.split(":")
+                    when (parts[0]) {
+                        "button" -> when (parts.getOrNull(1)) {
+                            "startAll" -> startAllAgents()
+                            "pauseAll" -> pauseAllAgents()
+                            "stopAll" -> stopAllAgents()
+                            "stepAll" -> stepAllAgents()
+                            "stepBackAll" -> stepBackAllAgents()
+                            "newCycle" -> newFile()
+                            "newAgent" -> newAgent()
+                            "save" -> saveCurrent()
+                            "open" -> openFileDialog()?.let { openFile(it) }
+                            "settings" -> Substrate.showSettingsDialog = true
+                            "samples" -> Substrate.showSamplesDialog = true
+                            else -> Substrate.log("Unknown button: $arg")
+                        }
+                        "tab" -> {
+                            val name = parts.getOrNull(1) ?: return@launch
+                            val idx = TabsModel.tabs.indexOfFirst { it.fileName == name }
+                            if (idx >= 0) app.setActiveTab(idx)
+                            else Substrate.log("Tab not found: $name")
+                        }
+                        "agent" -> {
+                            val name = parts.getOrNull(1) ?: return@launch
+                            val act = parts.getOrNull(2) ?: return@launch
+                            val agent = AgentsModel.byName(name) ?: run {
+                                Substrate.log("Agent not found: $name"); return@launch
+                            }
+                            when (act) {
+                                "play" -> { startAgent(agent.id); agent.lastPressed = "play" }
+                                "pause" -> { pauseAgent(agent.id); agent.lastPressed = "pause" }
+                                "stop" -> { stopAgent(agent.id); agent.lastPressed = "stop" }
+                                "step" -> stepAgent(agent.id)
+                                "stepBack" -> stepBackAgent(agent.id)
+                                else -> Substrate.log("Unknown agent action: $act")
+                            }
+                        }
+                        "menu" -> {
+                            val menu = parts.getOrNull(1) ?: return@launch
+                            val item = parts.getOrNull(2)
+                            if (item == null) Substrate.log("Menu opened: $menu")
+                            else Substrate.log("Menu click: $menu → $item (simulated)")
+                        }
+                        "file" -> {
+                            val fileName = parts.getOrNull(1) ?: return@launch
+                            val act = parts.getOrNull(2) ?: return@launch
+                            when (act) {
+                                "reset" -> app.resetFile(fileName)
+                                "up" -> moveFileUp(fileName)
+                                "down" -> moveFileDown(fileName)
+                                "rename" -> { Substrate.pendingRenameFile = fileName }
+                                "delete" -> { Substrate.pendingDeleteFile = fileName; Substrate.showDeleteFileDialog = true }
+                                "expand" -> {
+                                    Substrate.expandedFileName = if (Substrate.expandedFileName == fileName) null else fileName
+                                    Substrate.activeFileName = fileName
+                                }
+                                else -> Substrate.log("Unknown file action: $act")
+                            }
+                        }
+                        else -> Substrate.log("Unknown click target: $arg")
+                    }
+                }
+
+                // ---------- :simple:clickAt ----------
+                "clickAt" -> if (arg != null) {
+                    val parts = arg.split(",").map { it.trim() }
+                    val x = parts.getOrNull(0)?.toIntOrNull() ?: return@launch
+                    val y = parts.getOrNull(1)?.toIntOrNull() ?: return@launch
+                    try {
+                        val robot = Robot()
+                        robot.mouseMove(x, y)
+                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+                    } catch (e: Exception) {
+                        Substrate.log("clickAt failed: ${e.message}")
+                    }
+                }
+
+                // ---------- :simple:type ----------
+                "type" -> if (arg != null) {
+                    val parts = arg.split(",", limit = 3).map { it.trim() }
+                    val text = parts.getOrNull(0) ?: return@launch
+                    val target = parts.getOrNull(1) ?: return@launch
+                    val delayMs = parts.getOrNull(2)?.toLongOrNull() ?: 30L
+                    scope.launch(Dispatchers.Default) {
+                        for (ch in text) {
+                            withContext(Dispatchers.Main) {
+                                when (target) {
+                                    "editor:current" -> {
+                                        val tab = TabsModel.active() ?: return@withContext
+                                        tab.code += ch
+                                        tab.dirty = true
+                                        app.publishActive()
+                                    }
+                                    "editor:cursor" -> {
+                                        val tab = TabsModel.active() ?: return@withContext
+                                        val pos = tab.cursorPosition.coerceIn(0, tab.code.length)
+                                        tab.code = tab.code.substring(0, pos) + ch + tab.code.substring(pos)
+                                        tab.cursorPosition = pos + 1
+                                        tab.dirty = true
+                                        app.publishActive()
+                                    }
+                                    "editor:replace" -> {
+                                        val tab = TabsModel.active() ?: return@withContext
+                                        if (ch == text.first()) tab.code = ""
+                                        tab.code += ch
+                                        tab.dirty = true
+                                        app.publishActive()
+                                    }
+                                    "search:query" -> { Substrate.searchQuery += ch }
+                                    "search:replace" -> { Substrate.replaceQuery += ch }
+                                    "dialog:rename:name" -> {
+                                        Substrate.pendingRenameFile = (Substrate.pendingRenameFile ?: "") + ch
+                                    }
+                                    else -> {}
+                                }
+                            }
+                            if (delayMs > 0) delay(delayMs)
+                        }
+                    }
+                }
+
+                // ---------- :simple:openTerminal ----------
+                "openTerminal" -> {
+                    val title = arg ?: "Console"
+                    TerminalModel.open(title, scope)
+                }
+
+                // ---------- :simple:closeTerminal ----------
+                "closeTerminal" -> {
+                    val title = arg ?: "Console"
+                    TerminalModel.byTitle(title)?.let { TerminalModel.close(it.id) }
+                }
+
+                // ---------- :simple:sendTerminal ----------
+                "sendTerminal" -> if (arg != null) {
+                    val parts = arg.split(",", limit = 2).map { it.trim() }
+                    val command = parts.getOrNull(0) ?: return@launch
+                    val title = parts.getOrNull(1) ?: "Console"
+                    val session = TerminalModel.byTitle(title) ?: run {
+                        Substrate.log("sendTerminal: terminal not found: $title"); return@launch
+                    }
+                    session.running = true
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            session.stdin.write((command + "\n").toByteArray(StandardCharsets.UTF_8))
+                            session.stdin.flush()
+                        } catch (e: Exception) {
+                            Substrate.log("sendTerminal error: ${e.message}")
+                        } finally {
+                            session.running = false
+                        }
+                    }
+                }
+
+                // ---------- :simple:typeTerminal ----------
+                "typeTerminal" -> if (arg != null) {
+                    val parts = arg.split(",", limit = 3).map { it.trim() }
+                    val text = parts.getOrNull(0) ?: return@launch
+                    val title = parts.getOrNull(1) ?: run {
+                        Substrate.log("typeTerminal: missing title"); return@launch
+                    }
+                    val delayMs = parts.getOrNull(2)?.toLongOrNull() ?: 30L
+                    val session = TerminalModel.byTitle(title) ?: run {
+                        Substrate.log("typeTerminal: terminal not found: $title"); return@launch
+                    }
+                    session.running = true
+                    scope.launch(Dispatchers.Default) {
+                        for (ch in text) {
+                            try {
+                                session.stdin.write(ch.toString().toByteArray(StandardCharsets.UTF_8))
+                                session.stdin.flush()
+                            } catch (_: Exception) { break }
+                            session.input += ch
+                            withContext(Dispatchers.Main) { app.publishActive() }
+                            if (delayMs > 0) delay(delayMs)
+                        }
+                        try {
+                            session.stdin.write("\n".toByteArray(StandardCharsets.UTF_8))
+                            session.stdin.flush()
+                        } catch (_: Exception) {}
+                        session.input += "\n"
+                        session.running = false
+                        withContext(Dispatchers.Main) { app.publishActive() }
+                    }
+                }
+
+                // ---------- :simple:search ----------
+                "search" -> if (arg != null) {
+                    Substrate.searchQuery = arg
+                    Substrate.searchMatches = searchInActiveTab(arg)
+                    Substrate.searchCurrent = 0
+                }
+                "search:query" -> { Substrate.results() }
+                "search:matches" -> {}
+                "search:current" -> {}
+                "search:count" -> {}
+                "search:next" -> {
+                    if (Substrate.searchCurrent < Substrate.searchMatches.size - 1) Substrate.searchCurrent++
+                }
+                "search:prev" -> {
+                    if (Substrate.searchCurrent > 0) Substrate.searchCurrent--
+                }
+                "search:clear" -> {
+                    Substrate.searchQuery = ""
+                    Substrate.searchMatches = emptyList()
+                    Substrate.searchCurrent = 0
+                }
+
                 else -> Substrate.log("Unknown :simple:$action")
             }
         }
+    }
+
+    private fun searchInActiveTab(query: String): List<Int> {
+        val code = TabsModel.active()?.code ?: return emptyList()
+        if (query.isEmpty()) return emptyList()
+        val lines = mutableListOf<Int>()
+        var idx = code.indexOf(query)
+        while (idx >= 0) {
+            val line = code.substring(0, idx).count { it == '\n' } + 1
+            if (line !in lines) lines += line
+            idx = code.indexOf(query, idx + 1)
+        }
+        return lines
     }
 
     // ---------- save/load ----------
@@ -616,3 +844,5 @@ class MainScreenSystem(private val app: MainScreenApp) {
         return null
     }
 }
+
+private fun Substrate.results() {}

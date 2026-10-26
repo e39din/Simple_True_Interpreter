@@ -1,7 +1,9 @@
 package be.simple
 
-import be.`true`.Interpreter
 import be.`true`.Status
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class MainScreenCoreTest {
@@ -24,6 +26,8 @@ class MainScreenCoreTest {
         Substrate.clearLog()
         Substrate.errorLines = emptySet()
         Substrate.resolvedLines = emptySet()
+        TerminalModel.closeAll()
+        SnackbarModel.clear()
         app = MainScreenApp()
     }
 
@@ -165,7 +169,6 @@ class MainScreenCoreTest {
         val tab = TabsModel.active()!!
         tab.code = "#00cc22 = color"
         app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
         assertEquals("#00cc22", tab.interpreter.variables["color"])
     }
 
@@ -304,7 +307,6 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         Substrate.strictMode = true
         val tab = TabsModel.active()!!
-        // create a tab named "test.cycle" so tabExists("test") == true
         TabsModel.create("test.cycle", "=> :stop", makeActive = false)
         tab.code = "1 => :test"
         val ok = app.validateCurrent()
@@ -486,5 +488,104 @@ class MainScreenCoreTest {
         val before = TabsModel.activeIndex
         app.setActiveFile("nonexistent.cycle")
         assertEquals(before, TabsModel.activeIndex)
+    }
+
+    // ---------- 17. TerminalModel ----------
+
+    @Test fun `terminal open creates session`() {
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.Default)
+            val s = TerminalModel.open("Test", scope)
+            assertEquals("Test", s.title)
+            assertEquals(1, TerminalModel.sessions.size)
+            TerminalModel.closeAll()
+        }
+    }
+
+    @Test fun `terminal close removes session`() {
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.Default)
+            val s = TerminalModel.open("Test", scope)
+            TerminalModel.close(s.id)
+            assertTrue(TerminalModel.sessions.isEmpty())
+        }
+    }
+
+    @Test fun `terminal byTitle finds session`() {
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.Default)
+            TerminalModel.open("Foo", scope)
+            assertNotNull(TerminalModel.byTitle("Foo"))
+            assertNull(TerminalModel.byTitle("Bar"))
+            TerminalModel.closeAll()
+        }
+    }
+
+    @Test fun `terminal closeAll clears sessions`() {
+        runBlocking {
+            val scope = CoroutineScope(Dispatchers.Default)
+            TerminalModel.open("A", scope)
+            TerminalModel.open("B", scope)
+            TerminalModel.closeAll()
+            assertTrue(TerminalModel.sessions.isEmpty())
+        }
+    }
+
+    // ---------- 18. SnackbarModel ----------
+
+    @Test fun `snackbar show adds message`() {
+        SnackbarModel.show("hello", "warning")
+        assertEquals(1, SnackbarModel.messages.size)
+        assertEquals("hello", SnackbarModel.messages[0].text)
+        assertEquals("warning", SnackbarModel.messages[0].kind)
+    }
+
+    @Test fun `snackbar dismiss removes message`() {
+        SnackbarModel.show("hello", "warning")
+        val id = SnackbarModel.messages[0].id
+        SnackbarModel.dismiss(id)
+        assertTrue(SnackbarModel.messages.isEmpty())
+    }
+
+    @Test fun `snackbar max 3 messages`() {
+        SnackbarModel.show("a")
+        SnackbarModel.show("b")
+        SnackbarModel.show("c")
+        SnackbarModel.show("d")
+        assertEquals(3, SnackbarModel.messages.size)
+    }
+
+    @Test fun `snackbar clear removes all`() {
+        SnackbarModel.show("a")
+        SnackbarModel.show("b")
+        SnackbarModel.clear()
+        assertTrue(SnackbarModel.messages.isEmpty())
+    }
+
+    // ---------- 19. pauseAll / resumeAll in applyResult ----------
+
+    @Test fun `applyResult pauseAll command pauses all agents`() {
+        app.ensureMainTab()
+        app.newAgentTab()
+        val result = be.`true`.StepResult(
+            currentStep = 1, changedVariables = emptyMap(), removedVariables = emptyList(),
+            log = ":pauseAll", status = Status.RUNNING, command = "pauseAll"
+        )
+        val agent = AgentsModel.agents.first()
+        app.applyResult(agent, result)
+        assertTrue(AgentsModel.agents.all { it.status == Status.PAUSED })
+    }
+
+    @Test fun `applyResult resumeAll command resumes all agents`() {
+        app.ensureMainTab()
+        app.newAgentTab()
+        AgentsModel.agents.forEach { it.status = Status.PAUSED }
+        val result = be.`true`.StepResult(
+            currentStep = 1, changedVariables = emptyMap(), removedVariables = emptyList(),
+            log = ":resumeAll", status = Status.RUNNING, command = "resumeAll"
+        )
+        val agent = AgentsModel.agents.first()
+        app.applyResult(agent, result)
+        assertTrue(AgentsModel.agents.all { it.status == Status.RUNNING })
     }
 }

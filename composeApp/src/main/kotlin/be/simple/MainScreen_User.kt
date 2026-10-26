@@ -92,6 +92,8 @@ private val ERROR_BADGE = Color(0xFFFFCDD2)
 private val ERROR_TEXT = Color(0xFFB71C1C)
 private val RESOLVED_BADGE = Color(0xFFC8E6C9)
 private val RESOLVED_TEXT = Color(0xFF2E7D32)
+private val ASSERT_BADGE = Color(0xFFFFF9C4)
+private val ASSERT_TEXT = Color(0xFFF57F17)
 private val FINISH_COLOR = Color(0xFF2E7D32)
 private val STRICT_BADGE = Color(0xFFFFF59D)
 private val DESTROY_COLOR = Color(0xFF9C27B0)
@@ -99,6 +101,14 @@ private val DESTROY_BG = Color(0xFFF3E5F5)
 private val MESSAGE_BG = Color(0xFFFFF3E0)
 private val MESSAGE_FG = Color(0xFF6D4C00)
 private val MESSAGE_CHIP_BG = Color(0xFFFFE0B2)
+
+private val SNACKBAR_WARNING_BG = Color(0xFFFFF9C4)
+private val SNACKBAR_WARNING_BORDER = Color(0xFFFFE082)
+private val SNACKBAR_WARNING_TEXT = Color(0xFFF57F17)
+private val SNACKBAR_ERROR_BG = Color(0xFFFFCDD2)
+private val SNACKBAR_ERROR_TEXT = Color(0xFFB71C1C)
+private val SNACKBAR_INFO_BG = Color(0xFFE3F2FD)
+private val SNACKBAR_INFO_TEXT = Color(0xFF1565C0)
 
 private val RUNNING_BG = Color(0xFFDFF0D8)
 private val PAUSED_BG = Color(0xFFFFF3CD)
@@ -154,6 +164,7 @@ fun App() {
             sys.saveSettings()
             sys.stopAllAgents()
             sys.stopAutoSave()
+            TerminalModel.closeAll()
         }
     }
 
@@ -202,9 +213,11 @@ fun App() {
             }
             HorizontalSplitter { }
             Box(Modifier.fillMaxWidth().height(logH).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                LogPanel(Modifier.fillMaxSize())
+                LogOrTerminalPanel(Modifier.fillMaxSize())
             }
         }
+
+        SnackbarHost()
     }
 
     if (Substrate.showSettingsDialog) SettingsDialog(app, sys, onDismiss = { Substrate.showSettingsDialog = false })
@@ -242,6 +255,124 @@ private fun handleHotkey(ev: KeyEvent, app: MainScreenApp): Boolean {
         else -> false
     }
 }
+
+@Composable
+private fun SnackbarHost() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Column(
+            Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SnackbarModel.messages.forEach { msg ->
+                SnackbarView(msg, onDismiss = { SnackbarModel.dismiss(msg.id) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SnackbarView(msg: SnackbarMessage, onDismiss: () -> Unit) {
+    LaunchedEffect(msg.id) {
+        delay(5000)
+        onDismiss()
+    }
+    val bg = when (msg.kind) {
+        "error" -> SNACKBAR_ERROR_BG
+        "info" -> SNACKBAR_INFO_BG
+        else -> SNACKBAR_WARNING_BG
+    }
+    val fg = when (msg.kind) {
+        "error" -> SNACKBAR_ERROR_TEXT
+        "info" -> SNACKBAR_INFO_TEXT
+        else -> SNACKBAR_WARNING_TEXT
+    }
+    Row(
+        Modifier
+            .background(bg, RoundedCornerShape(8.dp))
+            .border(1.dp, fg.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("⚠", color = fg, fontSize = 14.sp)
+        Spacer(Modifier.width(8.dp))
+        Text(msg.text, color = fg, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(8.dp))
+        SmallIconButton("📋") { copyToClipboard(msg.text) }
+        Spacer(Modifier.width(4.dp))
+        SmallIconButton("×") { onDismiss() }
+    }
+}
+
+@Composable
+private fun LogOrTerminalPanel(modifier: Modifier) {
+    var tab by remember { mutableStateOf(if (TerminalModel.sessions.isEmpty()) "Log" else "Terminal") }
+    Column(modifier) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TabChip("Log", tab == "Log") { tab = "Log" }
+            if (TerminalModel.sessions.isNotEmpty()) {
+                TabChip("Terminal", tab == "Terminal") { tab = "Terminal" }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        when (tab) {
+            "Terminal" -> TerminalPanel(Modifier.fillMaxSize())
+            else -> LogPanel(Modifier.fillMaxSize())
+        }
+    }
+}
+
+@Composable
+private fun TerminalPanel(modifier: Modifier) {
+    Column(modifier.background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).padding(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Terminal", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+            Spacer(Modifier.weight(1f))
+            SmallIconButton("📋") { copyToClipboard(terminalAsText()) }
+            Spacer(Modifier.width(4.dp))
+            SmallIconButton("×") { TerminalModel.closeAll() }
+        }
+        Spacer(Modifier.height(6.dp))
+        SelectionContainer {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                TerminalModel.sessions.forEach { session -> TerminalSessionView(session) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalSessionView(session: TerminalModel.TerminalSession) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("> ${session.title}", color = Color(0xFF4EC9B0), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            if (session.running) {
+                Spacer(Modifier.width(4.dp))
+                Text("⏳", fontSize = 10.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            SmallIconButton("×") { TerminalModel.close(session.id) }
+        }
+        Text(
+            session.output,
+            color = if (session.output.isNotEmpty()) Color(0xFFCCCCCC) else Color.Transparent,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Row {
+            Text("$ ", color = Color(0xFF569CD6), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(session.input, color = Color(0xFFCE9178), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            if (session.alive) {
+                Text("▌", color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+}
+
+private fun terminalAsText(): String =
+    TerminalModel.sessions.joinToString("\n\n") { s ->
+        "> ${s.title}\n${s.output}\n$ ${s.input}"
+    }
 
 @Composable
 private fun DragSplitter(vertical: Boolean = true, onDrag: (Float) -> Unit) {
@@ -544,6 +675,7 @@ private fun descriptionFor(template: String): String = when {
     template.contains("=> :result") -> "Function result"
     template.contains("=> :error:resolve") -> "Resolve errors"
     template.contains("=> :error") -> "Error stack"
+    template.contains("=> :assert") -> "Assert"
     template.contains("=> :source:function") -> "Local call"
     template.contains("=> :test!") -> "Async tab call"
     template.contains("=> :test") -> "Tab call"
@@ -557,6 +689,10 @@ private fun descriptionFor(template: String): String = when {
     template.contains(":agent:") -> "Agent property"
     template.contains(":agent:status") -> "All agent statuses"
     template.contains("=> :activeTab") -> "Switch tab"
+    template.contains("=> :pauseAll") -> "Pause all agents"
+    template.contains("=> :resumeAll") -> "Resume all agents"
+    template == ":pauseAll" -> "Pause all agents"
+    template == ":resumeAll" -> "Resume all agents"
     template.contains("-> nothing") -> "Destroy"
     template.contains("=> file:") -> "Copy to file"
     template.contains("-> file:") -> "Move to file"
@@ -1222,7 +1358,7 @@ private fun LogPanel(modifier: Modifier) {
 @Composable
 private fun LogFilterBar() {
     val filters = listOf(
-        "All" to "All", "Errors" to "error", "Agents" to "agent",
+        "All" to "All", "Errors" to "error", "Asserts" to "assert", "Agents" to "agent",
         "Jumps" to "jump", "Commands" to "command", "Steps" to "step",
         "Strings" to "string", "Messages" to "message", "Destroy" to "destroy"
     )
@@ -1240,24 +1376,29 @@ private fun LogFilterChip(label: String, type: String) {
     else if (type == "agent") Substrate.logEntries.count { it.type.startsWith("agent:") }
     else Substrate.logCount(type)
     val isError = type == "error"
+    val isAssert = type == "assert"
     val isDestroy = type == "destroy"
     val isMessage = type == "message"
     val bg = when {
         selected && isError -> ERROR_BADGE
+        selected && isAssert -> ASSERT_BADGE
         selected && isDestroy -> DESTROY_BG
         selected && isMessage -> MESSAGE_CHIP_BG
         selected -> ACCENT
         isError && count > 0 -> ERROR_BADGE.copy(alpha = 0.5f)
+        isAssert && count > 0 -> ASSERT_BADGE.copy(alpha = 0.5f)
         isDestroy && count > 0 -> DESTROY_BG.copy(alpha = 0.5f)
         isMessage && count > 0 -> MESSAGE_CHIP_BG.copy(alpha = 0.5f)
         else -> MENU_BG
     }
     val fg = when {
         selected && isError -> ERROR_TEXT
+        selected && isAssert -> ASSERT_TEXT
         selected && isDestroy -> DESTROY_COLOR
         selected && isMessage -> MESSAGE_FG
         selected -> Color.White
         isError && count > 0 -> ERROR_TEXT
+        isAssert && count > 0 -> ASSERT_TEXT
         isDestroy && count > 0 -> DESTROY_COLOR
         isMessage && count > 0 -> MESSAGE_FG
         else -> TEXT
@@ -1298,6 +1439,9 @@ private fun LogList(modifier: Modifier) {
 private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
     val isError = entry.type == "error" && !entry.resolved
     val isResolved = entry.type == "error" && entry.resolved
+    val isAssert = entry.type == "assert"
+    val isAssertFail = isAssert && !entry.resolved
+    val isAssertOk = isAssert && entry.resolved
     val isDestroy = entry.type == "destroy"
     val isMessage = entry.type == "message"
     val isFinish = entry.text.startsWith("✓")
@@ -1308,6 +1452,8 @@ private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
     val bg = when {
         isError -> ERROR_BADGE
         isResolved -> RESOLVED_BADGE
+        isAssertFail -> ASSERT_BADGE
+        isAssertOk -> RESOLVED_BADGE
         isDestroy -> DESTROY_BG
         isMessage -> MESSAGE_BG
         idx == 0 -> Color(0xFFE6F4EA)
@@ -1317,6 +1463,8 @@ private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
     val fg = when {
         isError -> ERROR_TEXT
         isResolved -> RESOLVED_TEXT
+        isAssertFail -> ASSERT_TEXT
+        isAssertOk -> RESOLVED_TEXT
         isDestroy -> DESTROY_COLOR
         isMessage -> MESSAGE_FG
         isFinish -> FINISH_COLOR

@@ -6,8 +6,8 @@ License: Apache 2.0 (`LICENSE-TRUE`)
 
 ## Terminology
 
-- **Container** — a string of data. Everything in the language is a container.
-- **Named container** — a container with a name (`value = name`).
+- **Container** — a string of data. Everything in the language is a container. A one-line container is a string, a multi-line container is a file. A container may contain any data — plain text, or an action (function) that executes on call.
+- **Named container** — a container with a name (`value = name`). The name is a reference to the content.
 - **Cycle** — a `.cycle` file (a file-function).
 - **Agent** — a `.agent` file (a file-function + agent UI buttons).
 - **`.true`** — no longer used (reserved for project settings).
@@ -34,10 +34,11 @@ License: Apache 2.0 (`LICENSE-TRUE`)
 18. **Read/write is symmetric** (except `@`-constants).
 19. **`actions` — the agent's program.** Multiline, default `":run"`. `:run` — atomic execution. `:run` without an argument — executes the current line.
 20. **Agent containers:** `step` (line number), `cycle` (file name), `speed` (ms per step), `color` (agent color in `#RRGGBB` / `#AARRGGBB` / `#RGB`).
-21. **`:error` — the file's error stack.** `:error`, `:error:line`, `:error:message`, `:error:lines`, `:error:messages`. Reaction — `actions`: `":error ? ^ :handle"`. `:error` does not clear `PAUSED`.
-22. **Naming, not creating.** `= name` is naming. `name` is a **name for the value on the left**. The value already exists. `name` receives the value. There is no "creation" of a container — the container is the value; `name` is a reference to it.
-23. **No silent creation.** `=> name` without a declaration means **naming** — the name receives the value. This is not an error. But **system names are reserved** (`result`, `parameters`, `nothing`, `step`, `cycle`, `speed`, `color`, `error`, `log`, `message`, `size`, `s`, `math`, `data`, `json`, `file`, `api`, `console`, `simple`, `agent`, `run`, `range`, `repeat`, `activeTab`, `path`, `source`, `test`, `return`, `assert`, `call`, `filter`, `matches`, `map`, `reduce`, `fold`, `each`) — you cannot name a container with a system name.
-24. **Modules and imports are not needed.** True + Simple can open any file from code via `:file:read` / `:file:data` / `^ file.cycle` / `:file_name`. This **effectively connects** the file — without separate import syntax. A file is a function (`:name`), a call is `data => :name`. No `import` / `require` / `use`.
+21. **`:error` — the file's error stack.** `:error`, `:error:line`, `:error:message`, `:error:lines`, `:error:messages`, `:error:resolve`. `:error` does **not** pause by default. To pause all agents — `:pauseAll`.
+22. **Naming, not creating.** `= name` is naming. `name` is a **name for the value on the left**. The value already exists. `name` receives the value.
+23. **`=>` is never naming.** `chain => name` — error if `name` is not declared. Naming — only via `=`.
+24. **Modules and imports are not needed.** True + Simple can open any file from code via `:file:read` / `:file:data` / `^ file.cycle` / `:file_name`. No `import` / `require` / `use`.
+25. **Any subject starting with `:` is both a function and a container. No exceptions.** `:math`, `:run`, `:log`, `:agent:main:status`, `:simple:search:count` — all. **Function:** `data => :name` — executes. **Container:** `:name` — substitution (empty string if not set). **Naming:** `:name => dst` / `:name = dst` — `dst` receives the value of `:name`. **Forbidden:** `dst = :name` — system name on the right of `=` is forbidden.
 
 ## Files
 
@@ -50,18 +51,16 @@ License: Apache 2.0 (`LICENSE-TRUE`)
 
 **Any extension** — an agent can jump to any file via `^ file.ext`.
 
-**Modules and imports are not needed conceptually** — any file can be opened from code, which effectively connects it.
-
 ## Program
 
 - Line numbers start at 1.
 - Default program — a loop: after the last line without `=> :stop`, execution returns to the first line.
 - `\` at line start — the whole line is treated as text (literal).
-- `\ ` (backslash + space) at line start — same as `\` (literal).
-- `\` before an operation symbol (`=`, `=>`, `^`, `->`, `?`, `->|`, `=>|`) — the symbol is treated as text; `\` is stripped in output.
-- `\,` — escapes a single separator symbol (comma) in args; `\;`, `\.` — likewise.
+- `\ ... \` in the middle of a line — the part between `\` and `\` is a **literal**, not executed or substituted.
+- `\` before an operation symbol — the symbol is treated as text; `\` is stripped in output.
+- `\,` — escapes a single separator (comma); `\;`, `\.` — likewise.
 - A line without a recognized operation is a comment.
-- **Examples in `SAMPLES.md`** work **in the middle of a loop**. Termination (`=> :stop`) is a separate matter.
+- **Examples in `SAMPLES.md`** work **in the middle of a loop**.
 
 ## Naming
 
@@ -74,14 +73,28 @@ value = name @
 - `name` — identifier `[A-Za-z_]\w*`. `nothing` — reserved.
 - `*` — hide from the main Values list.
 - `@` — constant: writing and moving are forbidden.
-- **Naming, not creating.** `value = name` gives the name `name` to the value `value`. The value already exists; `name` is a reference. Nothing is "created".
-- **No silent creation.** `=> name` / `:math => name` / `:error => name` — these are **naming** operations; they give `name` the result on the left. `requireDeclared` is applied only to:
-    - the **source** of `->` / `=>` (must already exist);
-    - the **base container** of a path (`arr:y:1` — `arr` must exist);
-    - the **system name check** in `runNaming` (`5 = result` — error).
-- **Action:** if `value` contains `=>`/`->`/`^`/`?` — it is an **action** (not substituted, stored as text). `a + 1 => a = action` — `action` = `"a + 1 => a"`.
+- **Naming, not creating.** `value = name` gives the name `name` to the value `value`.
+- **Naming is always `=`**, never `=>`.
+- **Content** — what is **before** the operation or chain of operations.
+- **`a + 1 => sum = func1`** ≡ **`\ a + 1 => sum \ = func1`** — both name `func1` as the content `"a + 1 => sum"`. The content is **text**, not executed.
 
-Changing a value by name changes the declaration text in the program (`syncCodeWithVariables`). Constants (`@`) are not rewritten.
+**Examples:**
+
+| Code | What happens |
+|---|---|
+| `50 = dmg` | Naming: `dmg` = `"50"` |
+| `= dmg` | Naming an empty container |
+| `12 + 1 => :math = dmg` | Naming the result: `dmg` = `"13"` |
+| `12 + 1 => newName` | **Error** — `newName` is not declared |
+| `:math => dst` | `dst` receives the value of `:math` |
+| `:result = sub` | Naming: `sub` = the value of `:result` |
+| `a => b` | **Error** — `b` is not declared (use `= b` first) |
+| `a -> b` | **Error** — `b` is not declared (use `= b` first) |
+| `data => :fn` | **Not naming** — result in `:fn` |
+| `data => :fn => dst` | `dst` receives the value of `:fn` |
+| `^ newName` | **Error** — unknown jump target |
+| `5 = :math` | **Error** — system name on the right |
+| `:math = dst` | Naming: `dst` = the value of `:math` |
 
 ### Name before use
 
@@ -89,44 +102,26 @@ Changing a value by name changes the declaration text in the program (`syncCodeW
 - `= name` (empty container), or
 - `value = name` (named container with a value).
 
-**Exception:** if the name is **already** a variable (declared earlier), `= name` is not needed.
+**Exception:** if the name is **already** a variable, `= name` is not needed.
 
-**Chains:** `a => :f => dst` — `dst` is **named** by the result; `dst` does not need to be declared first.
+### Everything with `:`
 
-```true
-= result
-1, 2, 3 => :sum => result
-```
+**Any subject starting with `:` is both a function and a container.** No exceptions.
 
-Both forms are valid:
-```true
-= result
-1, 2, 3 => :sum => result
-```
-```true
-1, 2, 3 => :sum => result
-```
+| Form | What |
+|---|---|
+| `data => :name` | Function — executes |
+| `:name` | Container — substitution (empty string if not set) |
+| `:name => dst` | Naming — `dst` receives the value of `:name` (empty if not set) |
+| `:name = dst` | Naming — same |
+| `dst = :name` | **Error** — system name on the right of `=` |
 
-### Substitution of named containers
-
-**Rule.** In any position **except the name part of an assignment** (`= name`), the name of a container (`name`) or a file-function (`:name`) is **substituted** with its value during interpretation.
-
-- **Left of `=`** — substitution: `:result = sub` → `sub = results["result"]`.
-- **Right of `=`** — name (not substituted): `5 = a` → `a` is a new name.
-- **In operations** — substitution: `a + 1 => :math` → `a` → value.
-- **In operation position** — substitution + execution: `func1` → its body, executed.
-
-**Exception:** the name part of `= name` is always **a name**, not a substitution.
-
-### Substitution example
-
-```true
-0 = sum
-a + 1 => sum = func1
-func1
-```
-
-`func1` — named container with the action `a + 1 => sum`. Every `func1` in operation position substitutes and executes the body. `sum` increases by 1 each time.
+**Examples:**
+- `:math` — value of the last `:math` operation.
+- `:run` — empty string (if not set).
+- `:log` — empty string.
+- `:agent:main:status` — empty string.
+- `:simple:search:count` — number of matches.
 
 ### Literal
 
@@ -153,11 +148,11 @@ To keep a name as text, use `\ name`:
 ```
 
 - `= label` — naming an empty container (a label).
-- `^ N` — goto by line number (N is a number).
+- `^ N` — goto by line number.
 - `^ label` — goto by label (no dot, exists in the current file).
 - `^ file_name.cycle` / `^ file_name.agent` / `^ data.txt` — goto to a file (dot — extension).
-- `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` — commands to the agent (like UI buttons).
-- `^ :reset` — reset the file (like `⟲`).
+- `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` — commands to the agent.
+- `^ :reset` — reset the file.
 - `^ notes` (no dot, no label, not a number) — **error**.
 
 **Priority of `^` parsing:**
@@ -167,13 +162,11 @@ To keep a name as text, use `\ name`:
 4. File (has dot) → file.
 5. Else → error.
 
-**File — only with a dot (extension).** No dot — label (if it exists) or number.
-
 ### Agent jump rules
 
-- Jump to a file **without reset**: `agent.fileName = target`, `currentStep = 1`, `variables` are preserved. `interpreter.reset()` is **not called** — only on `^ :reset`.
-- If the target file is occupied by **another agent** — error `occupied, 1, target=..., agent=...`, status `PAUSED`. The agent does not move.
-- The agent can jump to **its own file** — this is a normal transition (not recursion).
+- Jump to a file **without reset**: `agent.fileName = target`, `currentStep = 1`, `variables` are preserved.
+- If the target file is occupied by **another agent** — error `occupied, 1, target=..., agent=...`, `PAUSED`.
+- The agent can jump to **its own file** — normal transition.
 
 ## Conditions
 
@@ -183,33 +176,23 @@ condition ? operation
 
 - Left of `?` — the condition; right — any operation.
 - Supported: `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`, `!`.
-- **Parentheses are supported:** `(a == 1 || b == 1) && c == 2`.
+- **Parentheses are supported.**
 - **Priorities:** `||` < `&&` < `!` < comparison.
-- Comparison: numeric if both sides are numbers; otherwise lexical.
-- If there is no operation to the right of `?`, `?` stays text.
 - **Exactly one `?` per line.** Nested `?` — error `Multiple ? on one line`.
-
-**Examples:**
-
-```true
-a < max ? ^ do
-(a == 1 || b == 1) && c == 2 ? 5 = d
-!(a == 1) ? 9 = e
-```
 
 ## Copy and move
 
-- `a => b` — copy.
-- `a -> b` — move.
-- `v -> data:y:3` — **replace** an element.
-- `v ->| data:y:3` — **insert** (move).
-- `v =>| data:y:3` — **insert** (copy).
+- `a => b` — copy (requires `= b` before).
+- `a -> b` — move (requires `= b` before).
+- `v -> data:y:3` — replace an element.
+- `v ->| data:y:3` — insert (move).
+- `v =>| data:y:3` — insert (copy).
 - `file:a => file:b` — copy file content. `file:a -> file:b` — move.
 - `file:a => var` — read file into a container. `var => file:b` — write container to file.
 
 ### Chains `=>`
 
-`=>` can be **chained**: `data => :fn1 => :fn2 => dst`. The result of each function is the input to the next. **No intermediate names needed.**
+`=>` can be **chained**: `data => :fn1 => :fn2 = dst`. The result is named by `= dst`.
 
 ```true
 input.txt => :get => raw
@@ -228,11 +211,6 @@ raw:l => :size => lineCount
 => :activeTab, step
 ```
 
-- `:pause` / `:resume` / `:stop` — current agent's status.
-- `:reset` — a normal step.
-- `:activeTab` — switch tab.
-- **`:stop` ≠ `break`.** `:stop` finishes the **program**, not a loop. To exit a loop — jump `^ label` outside.
-
 ## `:math` — numeric operations
 
 | Operation | Syntax |
@@ -245,7 +223,7 @@ raw:l => :size => lineCount
 
 **Boolean operators** — with priorities and parentheses. Comparisons after arithmetic: `1 + 2 == 3 => :math` → `1`.
 
-**Result:** `results["math"]`, `results["math:op"]`. Into `variables` via `:math => var` or `:math:sum = sum` / `:math:sum => sum`. If there is no result — empty container.
+**Result:** `:math` (substitution), `:math:op`. To name — `:math = dst` / `:math => dst`.
 
 ## `:data` — container operations
 
@@ -265,74 +243,38 @@ raw:l => :size => lineCount
 | `join` | `data, axis => :data:join` | by axis |
 | `sort` | `data:y => :data:sort` | by axis |
 | `push` | `data:y, v => :data:push` | by axis |
-| `pop` | `data:y => :data:pop` | by axis (stack: `pop` — top, `pop_rest` — rest) |
-| `peek` | `data:y => :peek` | by axis (top, no removal) |
+| `pop` | `data:y => :data:pop` | by axis |
+| `peek` | `data:y => :peek` | by axis |
 | `remove` / `swap` | `data:y, ... => :data:<op>` | by axis |
 | `deleteRange` / `replaceRange` | `data:y, from, to => :data:<op>` | by axis |
 | `filter` | `data, cond => :filter` | by `y` |
 | `matches` | `data, regex => :matches` | by `x` |
 
-**Removed (deprecated):** `:data:insert` (→ `->|`), `:data:set` (→ `->`), `:data:length` (→ `:data:y:size` / `:s`).
-
 **Axis is explicit or default `x`.** Exception: `substring`, `replace`, `chars` — only `x`.
-
-### Prefix `:data` / `:math` is optional
-
-If an operation **does not conflict** with another — the prefix may be omitted:
-
-```true
-1, 2, 3 => :sum        \ same as :math:sum
-arr:y => :pop          \ same as :data:pop
-arr:y => :size         \ same as :data:size
-arr:y => :s            \ short for :data:size
-arr:y => :sort         \ same as :data:sort (strings)
-```
-
-**Mandatory prefix:**
-- `:math:sort` — sort **numbers** (`:sort` — strings).
-- `:json:*`, `:file:*`, `:api:*` — groups.
 
 ## Functional operations
 
-`:map`, `:reduce`, `:fold`, `:each` — new operations in 0.11.0.
-
 | Operation | Syntax | Result |
 |---|---|---|
-| `:map` | `arr:y, expr => :map` | `results["map"]` — new container, same axis |
-| `:reduce` | `arr:y, init, expr => :reduce` | `results["reduce"]` — final accumulator |
-| `:fold` | `arr:y, init, expr => :fold` | `results["fold"]` — final accumulator (synonym of `:reduce`) |
-| `:each` | `arr:y, expr => :each` | nothing (side effects only) |
+| `:map` | `arr:y, expr => :map` | `:map` — new container |
+| `:reduce` | `arr:y, init, expr => :reduce` | `:reduce` — final accumulator |
+| `:fold` | `arr:y, init, expr => :fold` | `:fold` — final accumulator |
+| `:each` | `arr:y, expr => :each` | no result (side effects) |
 
 **Variables inside `expr`:**
-- `:map` — `n` (element), `i` (1-based index)
-- `:reduce` / `:fold` — `acc` (accumulator), `n` (element), `i` (1-based index)
+- `:map` — `n`, `i`
+- `:reduce` / `:fold` — `acc`, `n`, `i`
 - `:each` — `n`, `i`
 
 **Expression vs operation:**
-- `:map` / `:reduce` / `:fold` — `expr` is a **expression** evaluated via `evaluateMath(substitute(expr))`.
-- `:each` — `expr` is an **operation** executed via `executeOperation`.
+- `:map` / `:reduce` / `:fold` — `expr` is a **expression**.
+- `:each` — `expr` is an **operation**.
 
 **Argument as name:** if `expr` is a name of an existing container — its body is used.
 
 **Axis:** from `arr:y`, otherwise `x`.
 
-**Empty container:** `:map` → `""`, `:reduce` / `:fold` → `init`, `:each` → nothing.
-
-**Recursion:** `:map` inside `:map` is allowed, depth limit 10.
-
-### `<name>:splitter` — splitters for any axis of any string
-
-```true
-. => raw:splitter:l:;
-```
-
-- `<name>` — variable name (`raw`, `csv`, `line`), not `data`.
-- `<axis>` — `l`, `x`, `y`, `z`.
-- `<sep>` — separator (string, no spaces).
-
-**Default:** `l` — `\n`, `x` — empty, `y` — `,`, `z` — `;`.
-
-## `:json` — JSON
+## `:json`
 
 | Operation | Syntax |
 |---|---|
@@ -341,7 +283,7 @@ arr:y => :sort         \ same as :data:sort (strings)
 | `names` | `json => :json:names` |
 | `values` | `json => :json:values` |
 
-## `:file` — files
+## `:file`
 
 | Operation | Syntax |
 |---|---|
@@ -354,13 +296,7 @@ arr:y => :sort         \ same as :data:sort (strings)
 | `file:delete` | `path => :file:delete` |
 | `file:list` | `path => :file:list` |
 | `file:exists` | `path => :file:exists` |
-| `:path` | `:file:a => :path` — path to file |
-
-- Result of read — in `results['file']`.
-- Result of write — `1` / `-1`.
-- If the file is missing — `errorLine` (except `:file:exists` → `"0"`).
-
-**Short forms:** `file:a => var` (read), `var => file:b` (write), `file:a => file:b` (copy), `file:a -> file:b` (move).
+| `:path` | `:file:a => :path` |
 
 ## `:console`, `:run`
 
@@ -373,25 +309,12 @@ command => :console
 
 ### `:run` is atomic
 
-Two-level execution model:
-
 | Level | Who moves | What happens |
 |---|---|---|
 | **Agent step** | `executeOneStep` — advances `currentStep`, executes `actions` | One tick of the agent loop |
-| **Line step** | `:run` inside `actions` — executes **one** program line | Atomically, no recursion into `actions`, no re-`executeOneStep` |
+| **Line step** | `:run` inside `actions` — executes **one** program line | Atomically |
 
-`actions` default — `":run"`. That means: "on each agent step, execute **one** program line, nothing more". If `actions` = `":log\n:run"` — log the current line first, then execute.
-
-**Atomicity of `:run`:**
-
-| Property | Meaning |
-|---|---|
-| Not recursive | `:run` inside `:run` is not invoked — `executeLine` directly, without `runActions` |
-| Does not move `currentStep` itself | `applyOp` → `stepForward` moves it after `executeOperation` |
-| Single pass | `executeOperation` once, not a loop |
-| Does not call `actions` | `actions` — only at the top level of `executeOneStep` |
-
-## `:api` — network
+## `:api`
 
 | Operation | Syntax |
 |---|---|
@@ -402,7 +325,7 @@ Two-level execution model:
 | `api:patch` | `url, data => :api:patch` |
 | `api:websocket` | `url => :api:websocket` |
 
-## `:save` / `:load` — universal I/O
+## `:save` / `:load`
 
 ```true
 path, data  => :save
@@ -414,11 +337,25 @@ path, query => :load
 ## `:range` / `:repeat`
 
 ```true
-1, 5 => :range        \ "1,2,3,4,5"
-5, 1 => :range        \ "5,4,3,2,1"
+1, 5 => :range
+5, 1 => :range
 a + 1 => a = action
-action, 5 => :repeat  \ execute action 5 times
+action, 5 => :repeat
 ```
+
+## `:pauseAll` / `:resumeAll`
+
+```true
+:pauseAll
+:resumeAll
+1 => :pauseAll
+0 => :pauseAll
+go, go, go => :pauseAll
+```
+
+- `:pauseAll` — pause **all** agents.
+- `:resumeAll` — resume **all** agents.
+- Parameters ignored.
 
 ## `:error` — the file's error stack
 
@@ -426,80 +363,53 @@ Errors are **at the file level**, not the agent level. The stack accumulates.
 
 | Function | Result |
 |---|---|
-| `:error` | `"1"` / `"0"` — are there any errors |
+| `:error` | `"1"` / `"0"` |
 | `:error:line` | last error's line number |
 | `:error:message` | `<code>, <1\|0>, <details>` |
 | `:error:lines` | all lines, comma-separated |
 | `:error:messages` | all messages, `\n`-separated |
-| `message => :error` | set an error with the given message |
+| `message => :error` | set an error |
 | `0 => :error:resolve` | mark errors as resolved (`1` → `0`) |
+
+**`:error` does NOT pause by default.** To pause — call `:pauseAll`.
 
 ### Format of `error:message`
 
 `<code>, <1|0>, <details>`
 
-- `<code>` — error type: `custom`, `occupied`, `notfound`, `recursive`, `assert`, `range`, `const`, `nested`.
-- **`1` — active, `0` — resolved (inactive).**
+- `<code>` — `custom`, `occupied`, `notfound`, `recursive`, `assert`, `range`, `const`, `nested`.
+- **`1` — active, `0` — resolved.**
 - `<details>` — free text.
 
-**Examples:**
-- `custom, 1, fail`
-- `occupied, 1, target=main.cycle, agent=agent-2`
-- `range, 1, index=99, size=5`
-- `occupied, 0, target=main.cycle, agent=agent-2` (resolved)
-
-### Setting an error
+## `:assert` — condition check
 
 ```true
-message => :error
+a == b, "msg" => :assert
 ```
 
-`message` is substituted; written to the error stack; `PAUSED`; `errorLine = currentStep`.
+- **Success:** `:assert` = `"1"`, `LogEntry(type="assert", resolved=true)` — green.
+- **Failure:** `:assert` = `"0"`, `LogEntry(type="assert", resolved=false)` — red. Also added to `:error` stack with code `assert`.
+- **`:assert` does NOT pause by default.** To pause — call `:pauseAll`.
 
-### Resolving errors
-
-```true
-0 => :error:resolve
-```
-
-Replaces `, 1,` with `, 0,` in `error:message`, marks `LogEntry.resolved = true`, clears red in editor and log, sets green.
-
-### Assert via `?` + `:error`
-
-```true
-!(a == b) ? "a != b: $a vs $b" => :error
-```
-
-When `a == b` — skip; when `a != b` — error with the message. No separate `:assert` is needed.
-
-### Reaction via `actions`
-
-```
-:error ? ^ :handle
-:run
-```
-
-**Reset:** `reset()` — clears the error stack.
+Without message: `a == b => :assert` — snackbar warning `:assert without message`.
 
 ## Agents
-
-A program is **always** executed by agents. 1 agent per `.agent` file. Multiple `.agent` — multiple agents.
 
 ### Agent containers
 
 | Container | What |
 |---|---|
-| `step` | Line number (updated on move) |
-| `cycle` | File name (updated on move) |
-| `speed` | Speed in ms per step (`100 = speed`) — synchronized with `AgentState.speedMs` |
-| `color` | Agent color (`#00cc22 = color`) — synchronized with `AgentState.color` |
+| `step` | Line number |
+| `cycle` | File name |
+| `speed` | ms per step (`100 = speed`) |
+| `color` | Agent color (`#00cc22 = color`) |
 
 ### Agent functions
 
 ```true
-:agent:<name>:status      => <dst>
-:agent:<name>:waiter      => <dst>
-:agent:status             => <dst>
+:agent:<name>:status => dst
+:agent:<name>:waiter => dst
+:agent:status => dst
 ```
 
 ### Agent control
@@ -519,18 +429,15 @@ A program is **always** executed by agents. 1 agent per `.agent` file. Multiple 
 <ms>, <timeout> => :agent:wait:timeout
 ```
 
-`timeout` — maximum wait time. If exceeded — auto-`PAUSED`, `results["error"] = "timeout"`.
-
 ### Waiter — auto-detection
 
-- `:result` in the file → waiter. After `:result` — waits for `parameters` again.
+- `:result` in the file → waiter.
 - No `:result` → cyclic.
 
 ### Vertical files
 
 - `fileOrder` — vertical order (Y axis).
 - `↑` / `↓` buttons in the file button row.
-- Agent movement order — by Y (top to bottom).
 
 ### UI
 
@@ -540,7 +447,9 @@ A program is **always** executed by agents. 1 agent per `.agent` file. Multiple 
 
 ## `:simple` — interpreter functions
 
-`:simple:*` — 21 functions, async, log destructive actions.
+`:simple:*` — 36 functions, async, result in `:simple` = `"1"`. Destructive actions are logged.
+
+### Base (21)
 
 | Function | What |
 |---|---|
@@ -566,18 +475,46 @@ A program is **always** executed by agents. 1 agent per `.agent` file. Multiple 
 | `:simple:samples` | Samples |
 | `:simple:activeTab` | Switch tab |
 
-**Result:** `results["simple"] = "1"` (accepted, async).
+### UI automation (3)
 
-**Path:** absolute — as is; relative — from `projectDir`, fallback `baseDir`.
+| Function | What |
+|---|---|
+| `:simple:click` | Click a UI element (`button:*`, `tab:*`, `agent:*`, `menu:*`, `file:*`) |
+| `:simple:clickAt` | Click at absolute screen coordinates (AWT Robot) — **dangerous, runtime only, no headless** |
+| `:simple:type` | Type text into a UI element, character by character (like a human) |
+
+### Terminal (4)
+
+| Function | What |
+|---|---|
+| `:simple:openTerminal` | Open a real OS terminal (`ProcessBuilder`), start reading stdout/stderr |
+| `:simple:closeTerminal` | Close a terminal (`process.destroy()`) |
+| `:simple:sendTerminal` | Send a command to terminal (write to stdin + `\n`) |
+| `:simple:typeTerminal` | Type text into terminal, character by character (write to stdin) |
+
+### Search (8)
+
+| Function | What |
+|---|---|
+| `:simple:search` | Set query + run search |
+| `:simple:search:query` | Current query |
+| `:simple:search:matches` | Lines with matches |
+| `:simple:search:current` | Current match (1-based) |
+| `:simple:search:count` | Number of matches |
+| `:simple:search:next` | Next match |
+| `:simple:search:prev` | Previous match |
+| `:simple:search:clear` | Clear search |
+
+**Result:** `:simple` = `"1"` (accepted, async). To use — `:simple` (substitution) or `:simple = name` (naming). **Never** `name = :simple` — system name on the right is forbidden.
 
 ## Settings
 
 | Function | Syntax | Default |
 |---|---|---|
-| `:historyLimit` | `100 => :historyLimit`, `:historyLimit => dst` | 100 |
-| `:logLimit` | `1000 => :logLimit`, `:logLimit => dst` | 1000 |
-| `:strictMode` | `1 => :strictMode`, `:strictMode => dst` | 0 |
-| `:autoSync` | `1 => :autoSync`, `:autoSync => dst` | 1 |
+| `:historyLimit` | `100 => :historyLimit` / `:historyLimit = dst` | 100 |
+| `:logLimit` | `1000 => :logLimit` / `:logLimit = dst` | 1000 |
+| `:strictMode` | `1 => :strictMode` / `:strictMode = dst` | 0 |
+| `:autoSync` | `1 => :autoSync` / `:autoSync = dst` | 1 |
 
 ## Functions — files
 
@@ -586,61 +523,41 @@ A program is **always** executed by agents. 1 agent per `.agent` file. Multiple 
 ```true
 math:fact:
 parameters == 0 ? 1 => :result
+= sub
 parameters - 1 => .:math:fact => sub
 parameters * sub => :math => :result
 :result
 ```
 
 - `:parameters` — entry marker.
-- `=> :result` — set the value. **Does not return**, stores.
+- `=> :result` — set the value.
 - `:result` at the end — end marker. Waiter — auto.
-- `:run` — atomic execution.
-- `:log` — log.
 
-Call: `data => :math`, `data => :main`.
+Call: `data => :math = result`.
 
 **System names are reserved.**
-
-**Local call:** `data => .:file:fn` — call function `fn` from the current file. `data => .:file:fn => dst` — same with result assigned to `dst`.
 
 ## `actions` — the agent's program
 
 - `AgentState.actions: String` (multiline), default `":run"`.
 - `executeOneStep` advances `currentStep`, executes `actions`.
-- `:run` — atomic execution (no `actions`, no recursion).
+- `:run` — atomic execution.
 - `:log` — log the current line.
-- If there is no `:run` — the line is not executed (only `actions`).
 
-## `:stack` — explicit stack (recursion alternative)
+## `:stack` — explicit stack
 
 `:stack:push` = `:push`, `:stack:pop` = `:pop`, `:stack:peek` — top element without removal.
 
 ```true
 1, 2, 3 = stack
-stack:y, 4 => :stack:push     \ "1,2,3,4"
-stack:y => :stack:peek        \ "4"
-stack:y => :stack:pop         \ "4", rest "1,2,3"
+stack:y, 4 => :stack:push
+stack:y => :stack:peek = top
+stack:y => :stack:pop = top
 ```
-
-**Recursion via explicit stack** — instead of native call stack:
-
-```true
-= stack
-5 => stack:y => :push
-= loop
-stack:y => :size => sz
-sz == 0 ? ^ done
-stack:y => :pop => cur
-cur => :log
-^ loop
-= done
-```
-
-This is **iteration** with an explicit stack, not a recursive call. Any recursive algorithm can be rewritten this way.
 
 ## Strict Mode
 
-Strict Mode **forbids** calls to system functions. User `:file_name` (for `file_name.cycle`) — **allowed**. Substitution of named containers — **allowed**.
+Strict Mode **forbids** calls to system functions. User `:file_name` — **allowed**. Substitution of named containers — **allowed**.
 
 **System names (forbidden in Strict Mode):**
 
@@ -649,20 +566,19 @@ math, data, json, file, api, console, save, load, get, post, size, s,
 sum, min, max, avg, product, count, sort, map, reduce, fold, each,
 call, filter, matches, error, message, agent, run, log, repeat, range,
 parameters, result, activeTab, path, source, test, return, assert,
-simple, stack
+simple, stack, pauseAll, resumeAll
 ```
 
 **Allowed:**
-- `:file_name` — user files (`file_name.cycle` / `file_name.agent`)
+- `:file_name` — user files
 - `^ :stop` / `:pause` / `:resume` / `:delete` / `:reset` — commands
 - `=`, `=>`, `->`, `?`, `\`, `func1` — substitution
 
 ## Errors
 
 - **Validation:** unknown label, `Multiple ?`, `=> :result inside function`.
-- **Strict Mode:** see above.
 - **Execution:** write to a constant, out of range, file missing → `PAUSED` + `errorLine`.
-- **Agents:** `occupied` → error (`PAUSED`).
+- **Agents:** `occupied` → error.
 - `nothing = ...` → `error: 'nothing' is reserved`.
 - `5 = result` → `error: 'result' is reserved`.
 
@@ -671,19 +587,21 @@ simple, stack
 - Language: **0.11.0**. Interpreter: **1.1.0**.
 - `PATCH` — fixes. `MINOR` — new features. `MAJOR` — breaking.
 
-History — `CHANGELOG.md`.
-
 ## Version history (0.11.0)
 
-- **Substitution of named containers** — a name in operation position is substituted and executed.
-- **`:map` / `:reduce` / `:fold` / `:each`** — new functional operations.
-- **`:foreach` removed** — replaced by `:each`.
-- **`:error` format** — `<code>, <1|0>, <details>`; `:error:resolve`; `LogEntry.resolved`.
+- **Substitution of named containers.**
+- **`:map` / `:reduce` / `:fold` / `:each`** — new.
+- **`:foreach` removed.**
+- **`:error` format** — `<code>, <1|0>, <details>`; `:error:resolve`; `LogEntry.resolved`. `:error` does not pause by default.
+- **`:pauseAll` / `:resumeAll`** — new.
+- **`:assert`** — new.
 - **Settings** — `:historyLimit`, `:logLimit`, `:strictMode`, `:autoSync`.
-- **`:simple:*`** — 21 interpreter functions.
-- **`:stack:peek`** — new (top element without removal).
+- **`:simple:*`** — 36 functions.
+- **`:stack:peek`** — new.
 - **`speed` and `color`** — agent containers.
-- **`MrGreen.agent`** — first start (`#00cc22 = color`).
-- **Escaping** — `\ ` (line), `\,` / `\;` / `\.` (single separator).
+- **`MrGreen.agent`** — first start.
+- **Escaping** — `\ ` (line), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
 - **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
-- **Modules and imports are not needed** — any file can be opened from code.
+- **Modules and imports are not needed.**
+- **`=>` is never naming.** Naming — only `= name`.
+- **Any subject starting with `:` is both a function and a container. No exceptions.**

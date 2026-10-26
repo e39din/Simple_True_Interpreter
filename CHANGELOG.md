@@ -1,19 +1,27 @@
 # Changelog
 
-## 0.11.0 — Substitution, `:map`/`:reduce`/`:fold`/`:each`, `:error` format, `:simple:*`
+## 0.11.0 — Substitution, `:map`/`:reduce`/`:fold`/`:each`, `:pauseAll`/`:resumeAll`, `:assert`, `:simple:*`
 
 - **Substitution of named containers.** A name in operation position is substituted and executed. Applies to any container — with value (`5 = a`) or action (`a + 1 => sum = func1`). Recursion guard, max depth 10.
 - **`=>` is never naming.** `chain => name` — error if `name` is not declared. Naming — only `= name`.
-- **`:math` / `:data:*` / `:error` / `:json:*` / `:file:*` / `:api:*` — result is already in `results[...]`.** To name — `= name` separately, or `:math = name`.
+- **Content is what comes before the operation.** `a + 1 => sum = func1` ≡ `\ a + 1 => sum \ = func1` — both name `func1` as the content `"a + 1 => sum"` (text, not executed).
+- **Any subject starting with `:` is both a function and a container. No exceptions.** `:math`, `:run`, `:log`, `:agent:main:status`, `:simple:search:count` — all. `:name` — substitution (empty string if not set). `:name => dst` / `:name = dst` — naming. `dst = :name` — error.
 - **`:map` / `:reduce` / `:fold` / `:each`** — new functional operations.
 - **`:foreach` removed.** Replaced by `:each`.
 - **`:stack:peek`** — new (top element without removal).
-- **`:simple:*`** — 21 interpreter functions (async, result in `results["simple"] = "1"`).
+- **`:simple:*`** — 36 interpreter functions (async, result in `:simple` = `"1"`).
+- **`:simple:click`** — new: click a UI element (`button:*`, `tab:*`, `agent:*`, `menu:*`, `file:*`).
+- **`:simple:clickAt`** — new: click at absolute screen coordinates (AWT Robot). **Dangerous, runtime only, no headless.**
+- **`:simple:type`** — new: type text into a UI element, character by character (like a human). `delay` 30 ms by default.
+- **`:simple:openTerminal` / `:simple:closeTerminal` / `:simple:sendTerminal` / `:simple:typeTerminal`** — new: real OS terminal (ProcessBuilder, stdin/stdout/stderr, character-by-character stdin).
+- **`:simple:search:*`** — new: 8 functions for search results (`search`, `search:query`, `search:matches`, `search:current`, `search:count`, `search:next`, `search:prev`, `search:clear`).
+- **`:pauseAll` / `:resumeAll`** — new: pause / resume all agents. Parameters ignored.
+- **`:assert`** — new: `a == b, "msg" => :assert`. Success — green, failure — red. Does not pause by default. To pause — call `:pauseAll`.
 - **`:agent:wait:timeout`** — new.
 - **Settings:** `:historyLimit` (100), `:logLimit` (1000), `:strictMode` (0), `:autoSync` (1).
-- **`:error` format** — `<code>, <1|0>, <details>` (1 — active, 0 — resolved). `:error:resolve`, `LogEntry.resolved`, `errorLines` / `resolvedLines`.
+- **`:error` format** — `<code>, <1|0>, <details>` (1 — active, 0 — resolved). `:error:resolve`, `LogEntry.resolved`, `errorLines` / `resolvedLines`. **`:error` does not pause by default.**
 - **`COPY_RE`** — `a => b` copies.
-- **Escaping** — `\ ` (line literal), `\,` / `\;` / `\.` (single separator).
+- **Escaping** — `\ ` (line literal), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
 - **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
 - **Modules and imports are not needed** — any file can be opened from code.
 - **`MrGreen.agent`** — first start (`#00cc22 = color`).
@@ -23,7 +31,9 @@
 - **`NavigateBehavior` removed** — no more "occupied" dialog. Agent jumps without reset, or `occupied` error.
 - **EN UI + RU localization** — Settings → Language.
 - **Syntax highlight** (simple) — `TrueHighlighter`.
-- **`MainScreen_User.kt`**: `errorLines` red, `resolvedLines` green in editor and log.
+- **`MainScreen_User.kt`**: `errorLines` red, `resolvedLines` green, `assert` yellow/red in editor and log.
+- **`TerminalPanel`** — Log / Terminal tabs (real OS terminal).
+- **`SnackbarHost`** — warning/error/info snackbars (5 s, `📋`, `×`).
 - **`GoldenTests`** — `withTimeout(30_000)`, `waitUntilMs = 0`.
 - **`JsonParser`** — LRU 100.
 - **`parse(code)` cache** — by reference.
@@ -46,6 +56,7 @@
 - `:instruction` — removed (was in 0.10.0).
 - `MAX_AGENTS` — removed.
 - `.true` extension — no longer used (reserved for project settings).
+- `pauseAll` (without `:`) — not a system name. Only `:pauseAll`.
 
 ---
 

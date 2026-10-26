@@ -11,7 +11,7 @@ For each sample:
 - **+1 by topic** — one more language
 - **`<details>`** — other 8 languages
 
-All examples are complete. `= name` before `=> name` is optional — it is naming.
+`::before` and `::after` blocks — setup/teardown for a sample.
 
 ## Table of contents
 
@@ -27,6 +27,8 @@ All examples are complete. `= name` before `=> name` is optional — it is namin
 10. [Recursion via stack](#rec)
 11. [Games](#games)
 12. [Game designer: RPG balance](#balance)
+13. [UI automation](#ui)
+14. [Search](#search)
 
 ---
 
@@ -36,10 +38,8 @@ All examples are complete. `= name` before `=> name` is optional — it is namin
 
 **Sums all numbers in a container.**
 
-**True:**
 ```true
-= result
-1, 2, 3, 4, 5 => :sum => result
+1, 2, 3, 4, 5 => :sum = result
 ```
 **Result:** `result = "15"`
 
@@ -60,12 +60,6 @@ result = [1, 2, 3, 4, 5] |> Enum.sum()
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(S) :- S = #sum{N : num(N)}.
-num(1). num(2). num(3). num(4). num(5).
-```
 
 **Kotlin:**
 ```kotlin
@@ -124,10 +118,8 @@ for n in 1 2 3 4 5; do result=$((result + n)); done
 
 **Finds the maximum value.**
 
-**True:**
 ```true
-= result
-3, 7, 2, 9, 4 => :max => result
+3, 7, 2, 9, 4 => :max = result
 ```
 **Result:** `result = "9"`
 
@@ -148,12 +140,6 @@ result = [3, 7, 2, 9, 4] |> Enum.max()
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(M) :- M = #max{N : num(N)}.
-num(3). num(7). num(2). num(9). num(4).
-```
 
 **Kotlin:**
 ```kotlin
@@ -212,7 +198,6 @@ for n in 7 2 9 4; do [ "$n" -gt "$result" ] && result=$n; done
 
 **Assigns a string to a container.**
 
-**True:**
 ```true
 Hello, world = result
 ```
@@ -235,11 +220,6 @@ const result = "Hello, world";
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result("Hello, world").
-```
 
 **Kotlin:**
 ```kotlin
@@ -294,7 +274,6 @@ result="Hello, world"
 
 **Checks if a string is a palindrome (first char == last char).**
 
-**True:**
 ```true
 racecar = s
 s:x:1 = a
@@ -330,11 +309,6 @@ const result = a === b ? 1 : 0;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(1) :- s("racecar"), #first("racecar", A), #last("racecar", B), A = B.
-```
 
 **Kotlin:**
 ```kotlin
@@ -417,11 +391,9 @@ b="${s: -1}"
 
 **Counts lines in a file.**
 
-**True:**
 ```true
-= raw
-input.txt => :get => raw
-raw:l => :size => lineCount
+input.txt => :get = raw
+raw:l => :size = lineCount
 ```
 **Result:** `lineCount = "<number>"`
 
@@ -444,11 +416,6 @@ line_count=$(wc -l < input.txt)
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -517,10 +484,8 @@ fclose(f);
 
 **Reverses a string.**
 
-**True:**
 ```true
-= result
-hello => :reverse => result
+hello => :reverse = result
 ```
 **Result:** `result = "olleh"`
 
@@ -541,11 +506,6 @@ const result = [..."hello"].reverse().join("");
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(S) :- S = #reverse("hello").
-```
 
 **Kotlin:**
 ```kotlin
@@ -602,10 +562,8 @@ result=$(echo -n "hello" | rev)
 
 **Returns the length of a string.**
 
-**True:**
 ```true
-= result
-hello => :s => result
+hello => :s = result
 ```
 **Result:** `result = "5"`
 
@@ -626,11 +584,6 @@ int result = strlen("hello");
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(N) :- N = #size("hello").
-```
 
 **Kotlin:**
 ```kotlin
@@ -687,12 +640,9 @@ result=${#hello}
 
 **Calls an API and checks if the response contains "ok".**
 
-**True:**
 ```true
-= response
-= ok_found
-https://api.example.com/health => :get => response
-response, ok => :contains => ok_found
+https://api.example.com/health => :get = response
+response, ok => :contains = ok_found
 ok_found = result
 ```
 **Result:** `result = "1"` if response contains "ok"
@@ -721,11 +671,6 @@ result=$ok_found
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -782,7 +727,6 @@ result := okFound
 
 **Clojure:**
 ```clojure
-(require '[clj-http.client :as http])
 (def response (:body (http/get "https://api.example.com/health")))
 (def ok-found (if (clojure.string/includes? response "ok") "1" "0"))
 (def result ok-found)
@@ -801,11 +745,10 @@ result := okFound
 
 **Calculates a simple expression.**
 
-**True:**
 ```true
 3 = a
 4 = b
-a + b * 2 => :math => result
+a + b * 2 => :math = result
 ```
 **Result:** `result = "11"`
 
@@ -832,11 +775,6 @@ int result = a + b * 2;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(R) :- R = 3 + 4 * 2.
-```
 
 **Kotlin:**
 ```kotlin
@@ -909,11 +847,9 @@ result=$((a + b * 2))
 
 **Reads a CSV, counts lines.**
 
-**True:**
 ```true
-= raw
-input.csv => :get => raw
-raw:l => :size => rows
+input.csv => :get = raw
+raw:l => :size = rows
 ```
 **Result:** `rows = "<number>"`
 
@@ -936,11 +872,6 @@ rows=$(wc -l < input.csv)
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1009,17 +940,14 @@ fclose(f);
 
 **Jumps the agent to another file (no reset).**
 
-**True:**
 ```true
 ^ other.cycle
 ```
-**Result:** `agent.fileName = "other.cycle"`, `currentStep = 1`, `variables` preserved
 
 **Python:**
 ```python
 agent.file_name = "other.cycle"
 agent.current_step = 1
-# variables preserved
 ```
 
 **Elixir:**
@@ -1034,11 +962,6 @@ NewState = State#state{file = "other.cycle", step = 1}.
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1099,11 +1022,9 @@ agent.current_step = 1;
 
 **Stops the agent.**
 
-**True:**
 ```true
 ^ :stop
 ```
-**Result:** agent becomes `FINISHED`
 
 **Python:**
 ```python
@@ -1122,11 +1043,6 @@ exit(self(), normal).
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1181,11 +1097,9 @@ exit 0
 
 **Deletes the agent.**
 
-**True:**
 ```true
 ^ :delete
 ```
-**Result:** agent removed
 
 **Python:**
 ```python
@@ -1204,11 +1118,6 @@ exit(Pid, kill).
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1263,11 +1172,9 @@ unset agents["$name"]
 
 **Pauses the agent.**
 
-**True:**
 ```true
 ^ :pause
 ```
-**Result:** agent becomes `PAUSED`
 
 **Python:**
 ```python
@@ -1286,11 +1193,6 @@ sys:suspend(MainPid).
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1345,11 +1247,9 @@ kill -STOP "$pid"
 
 **Resumes the agent.**
 
-**True:**
 ```true
 ^ :resume
 ```
-**Result:** agent becomes `RUNNING`
 
 **Python:**
 ```python
@@ -1368,11 +1268,6 @@ sys:resume(MainPid).
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1425,13 +1320,11 @@ kill -CONT "$pid"
 
 ### 15. Agent reset
 
-**Resets the file (like `⟲`).**
+**Resets the file.**
 
-**True:**
 ```true
 ^ :reset
 ```
-**Result:** file code = `Substrate.startCode`, `currentStep = 1`
 
 **Python:**
 ```python
@@ -1453,11 +1346,6 @@ agent.currentStep = 1;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1517,12 +1405,9 @@ agent.current_step = 1;
 
 **Gets an agent's status.**
 
-**True:**
 ```true
-= result
-:agent:main:status => result
+:agent:main:status = result
 ```
-**Result:** `result = "RUNNING"` / `"PAUSED"` / `"STOPPED"` / `"FINISHED"`
 
 **Python:**
 ```python
@@ -1541,11 +1426,6 @@ Result = sys:get_state(MainPid).
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1600,12 +1480,9 @@ result=$main_status
 
 **Gets all agents' statuses.**
 
-**True:**
 ```true
-= result
-:agent:status => result
+:agent:status = result
 ```
-**Result:** `result = "main:RUNNING,agent-2:PAUSED"`
 
 **Python:**
 ```python
@@ -1624,11 +1501,6 @@ Result = string:join([atom_to_list(K) ++ ":" ++ atom_to_list(V#agent.status) || 
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1687,11 +1559,9 @@ result=$(for k in "${!agents[@]}"; do echo -n "$k:${agents[$k]},"; done | sed 's
 
 **Pauses the agent for N ms.**
 
-**True:**
 ```true
 100 => :agent:wait
 ```
-**Result:** `PAUSED`, resumes after 100 ms
 
 **Python:**
 ```python
@@ -1711,11 +1581,6 @@ await new Promise(r => setTimeout(r, 100));
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1766,184 +1631,16 @@ sleep 0.1
 
 ---
 
-### 19. Container step
-
-**Reads the `step` container (current line number).**
-
-**True:**
-```true
-= result
-step => result
-```
-**Result:** `result = "<current step>"`
-
-**Python:**
-```python
-result = str(agent.current_step)
-```
-
-**Elixir:**
-```elixir
-result = Integer.to_string(agent.step)
-```
-
-**JavaScript** (topic: state):
-```javascript
-const result = String(agent.currentStep);
-```
-
-<details>
-<summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
-
-**Kotlin:**
-```kotlin
-val result = agent.currentStep.toString()
-```
-
-**Rust:**
-```rust
-let result = agent.current_step.to_string();
-```
-
-**Haskell:**
-```haskell
-let result = show (currentStep agent)
-```
-
-**Lua:**
-```lua
-local result = tostring(agent.current_step)
-```
-
-**Erlang:**
-```erlang
-Result = integer_to_list(Agent#agent.step).
-```
-
-**Go:**
-```go
-result := strconv.Itoa(agent.CurrentStep)
-```
-
-**Clojure:**
-```clojure
-(def result (str (:current-step agent)))
-```
-
-**C:**
-```c
-char result[16]; sprintf(result, "%d", agent.current_step);
-```
-
-**Bash:**
-```bash
-result=$current_step
-```
-
-</details>
-
----
-
-### 20. Container cycle
-
-**Reads the `cycle` container (current file name).**
-
-**True:**
-```true
-= result
-cycle => result
-```
-**Result:** `result = "main.cycle"`
-
-**Python:**
-```python
-result = agent.file_name
-```
-
-**Elixir:**
-```elixir
-result = agent.file
-```
-
-**JavaScript** (topic: state):
-```javascript
-const result = agent.fileName;
-```
-
-<details>
-<summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
-
-**Kotlin:**
-```kotlin
-val result = agent.fileName
-```
-
-**Rust:**
-```rust
-let result = agent.file_name.clone();
-```
-
-**Haskell:**
-```haskell
-let result = fileName agent
-```
-
-**Lua:**
-```lua
-local result = agent.file_name
-```
-
-**Erlang:**
-```erlang
-Result = Agent#agent.file.
-```
-
-**Go:**
-```go
-result := agent.FileName
-```
-
-**Clojure:**
-```clojure
-(def result (:file-name agent))
-```
-
-**C:**
-```c
-const char *result = agent.file_name;
-```
-
-**Bash:**
-```bash
-result=$current_file
-```
-
-</details>
-
----
-
 ## <a name="destroy"></a>4. Destruction
 
 ### 21. Container delete
 
 **Deletes a container (`-> nothing`).**
 
-**True:**
 ```true
 a = 5
 a -> nothing
 ```
-**Result:** `a` becomes empty
 
 **Python:**
 ```python
@@ -1954,7 +1651,7 @@ del a
 **Elixir:**
 ```elixir
 a = 5
-# no direct delete; rebind to nil
+# no direct delete
 ```
 
 **JavaScript** (topic: state):
@@ -1965,11 +1662,6 @@ a = null;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -1986,7 +1678,6 @@ drop(a);
 **Haskell:**
 ```haskell
 let a = 5
--- immutable; no delete
 ```
 
 **Lua:**
@@ -1997,8 +1688,7 @@ a = nil
 
 **Erlang:**
 ```erlang
-A = 5,
-%% immutable; no delete
+A = 5.
 ```
 
 **Go:**
@@ -2010,7 +1700,6 @@ a = 0
 **Clojure:**
 ```clojure
 (def a 5)
-;; immutable; no delete
 ```
 
 **C:**
@@ -2033,11 +1722,9 @@ unset a
 
 **Deletes a file (`file:x -> nothing`).**
 
-**True:**
 ```true
 file:other.cycle -> nothing
 ```
-**Result:** file deleted
 
 **Python:**
 ```python
@@ -2057,11 +1744,6 @@ rm -f other.cycle
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2094,8 +1776,7 @@ require("fs").unlinkSync("other.cycle");
 ```
 
 **Go:**
-```go
-os.Remove("other.cycle")
+```goos.Remove("other.cycle")
 ```
 
 **Clojure:**
@@ -2118,10 +1799,9 @@ remove("other.cycle");
 
 **Returns the size of a container by axis.**
 
-**True:**
 ```true
 1, 2, 3 = arr
-arr:y => :size => result
+arr:y => :size = result
 ```
 **Result:** `result = "3"`
 
@@ -2145,12 +1825,6 @@ result = length(arr)
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(N) :- N = #count{X : arr(X)}.
-arr(1). arr(2). arr(3).
-```
 
 **Kotlin:**
 ```kotlin
@@ -2214,10 +1888,9 @@ result=${#arr[@]}
 
 **Appends a value to a container by axis.**
 
-**True:**
 ```true
 1, 2 = arr
-arr:y, 3 => :push => result
+arr:y, 3 => :push = result
 ```
 **Result:** `result = "1,2,3"`
 
@@ -2243,11 +1916,6 @@ const result = arr.join(",");
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% push is not idiomatic in Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2302,7 +1970,6 @@ result := strings.Join(parts, ",")
 ```c
 int arr[] = {1, 2}; int n = 2;
 arr[n++] = 3;
-/* manual string assembly */
 ```
 
 **Bash:**
@@ -2320,14 +1987,11 @@ result=$(IFS=,; echo "${arr[*]}")
 
 **Sets a splitter for an axis of a named container.**
 
-**True:**
 ```true
-= raw
-input.csv => :get => raw
+input.csv => :get = raw
 . => raw:splitter:l:;
-raw:l => :size => rows
+raw:l => :size = rows
 ```
-**Result:** `rows = "<number>"`
 
 **Python:**
 ```python
@@ -2348,11 +2012,6 @@ rows=$(tr ';' '\n' < input.csv | wc -l)
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2417,9 +2076,8 @@ rows := len(strings.Split(string(raw), ";"))
 
 **Generates a range of numbers, comma-separated.**
 
-**True:**
 ```true
-1, 5 => :range => result
+1, 5 => :range = result
 ```
 **Result:** `result = "1,2,3,4,5"`
 
@@ -2440,11 +2098,6 @@ result = Enum.join(1..5, ",")
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-result(S) :- S = #range(1, 5).
-```
 
 **Kotlin:**
 ```kotlin
@@ -2503,7 +2156,6 @@ result=$(seq -s, 1 5)
 
 **Executes a named action N times.**
 
-**True:**
 ```true
 0 = a
 a + 1 => a = action
@@ -2531,11 +2183,6 @@ for (let i = 0; i < 5; i++) a += 1;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not idiomatic in Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2596,11 +2243,10 @@ for i in $(seq 1 5); do a=$((a + 1)); done
 
 **Iterates over a container by axis.**
 
-**True:**
 ```true
 1, 2, 3 = arr
 0 = sum
-arr:y, n => sum + n => :math => sum => :each
+arr:y, n => sum + n => :math = sum => :each
 ```
 **Result:** `sum = "6"`
 
@@ -2627,12 +2273,6 @@ arr.forEach(n => total += n);
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-total(S) :- S = #sum{X : arr(X)}.
-arr(1). arr(2). arr(3).
-```
 
 **Kotlin:**
 ```kotlin
@@ -2699,10 +2339,9 @@ for n in 1 2 3; do total=$((total + n)); done
 
 **Reads the error stack.**
 
-**True:**
 ```true
 1 // 0 => :math
-:error:lines => result
+:error:lines = result
 ```
 **Result:** `result = "1"`
 
@@ -2731,11 +2370,6 @@ try { 1 / 0; } catch (e) { result = "1"; }
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2793,14 +2427,12 @@ result=0
 
 **Sets `:error ? ^ :handle` as an action.**
 
-**True:**
 ```true
 actions = ":error ? ^ :handle\n:run"
 1 // 0 => :math
 = handle
 error => :log
 ```
-**Result:** error handled, logged
 
 **Python:**
 ```python
@@ -2826,11 +2458,6 @@ try { 1 / 0; } catch (e) { console.log(e); }
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -2889,10 +2516,9 @@ _ = 1 / 0
 
 **Gets a value from JSON by key.**
 
-**True:**
 ```true
 {'name':'test','value':42} = json
-json, name => :json:get => result
+json, name => :json:get = result
 ```
 **Result:** `result = "test"`
 
@@ -2918,11 +2544,6 @@ const result = data.name;
 <details>
 <summary>Other languages (8)</summary>
 
-**Datalog:**
-```datalog
-% not native to Datalog
-```
-
 **Kotlin:**
 ```kotlin
 val data = kotlinx.serialization.json.Json.parseToJsonElement("""{"name":"test","value":42}""").jsonObject
@@ -2937,10 +2558,7 @@ let result = data["name"].as_str();
 
 **Haskell:**
 ```haskell
-import Data.Aeson
-let result = do
-    obj <- decodeStrict "{\"name\":\"test\",\"value\":42}" :: Maybe Value
-    withObject "obj" (\o -> o .: "name") obj
+-- via aeson
 ```
 
 **Lua:**
@@ -2966,8 +2584,7 @@ result := data["name"]
 
 **Clojure:**
 ```clojure
-(require '[cheshire.core :as json])
-(def data (json/parse-string "{\"name\":\"test\",\"value\":42}" true))
+(def data (parse-string "{\"name\":\"test\",\"value\":42}" true))
 (def result (:name data))
 ```
 
@@ -2989,10 +2606,9 @@ result=$(echo '{"name":"test","value":42}' | jq -r .name)
 
 **Gets all top-level keys of a JSON object.**
 
-**True:**
 ```true
 {'a':1,'b':2} = json
-json => :json:names => result
+json => :json:names = result
 ```
 **Result:** `result = "a,b"`
 
@@ -3017,11 +2633,6 @@ const result = Object.keys(data).join(",");
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -3066,8 +2677,7 @@ result := strings.Join(keys, ",")
 
 **Clojure:**
 ```clojure
-(require '[cheshire.core :as json])
-(def data (json/parse-string "{\"a\":1,\"b\":2}" true))
+(def data (parse-string "{\"a\":1,\"b\":2}" true))
 (def result (clojure.string/join "," (keys data)))
 ```
 
@@ -3091,7 +2701,6 @@ result=$(echo '{"a":1,"b":2}' | jq -r 'keys_unsorted | join(",")')
 
 **Jumps to line 5.**
 
-**True:**
 ```true
 ^ 5
 ```
@@ -3113,11 +2722,6 @@ goto line5;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -3172,7 +2776,6 @@ goto line5
 
 **Jumps to `do` if `a < max`.**
 
-**True:**
 ```true
 a < max ? ^ do
 ```
@@ -3196,11 +2799,6 @@ if (a < max) goto do_label;
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not native to Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -3255,7 +2853,6 @@ if (( a < max )); then :; fi
 
 **Classic FizzBuzz with jumps and conditions.**
 
-**True:**
 ```true
 = out
 1 = i
@@ -3268,19 +2865,19 @@ i % 5 == 0 ? ^ buzz
 ^ num
 = fizzbuzz
 FizzBuzz = out
-i + 1 => :math => i
+i + 1 => :math = i
 ^ loop
 = fizz
 Fizz = out
-i + 1 => :math => i
+i + 1 => :math = i
 ^ loop
 = buzz
 Buzz = out
-i + 1 => :math => i
+i + 1 => :math = i
 ^ loop
 = num
 i = out
-i + 1 => :math => i
+i + 1 => :math = i
 ^ loop
 = done
 ```
@@ -3328,11 +2925,6 @@ for (let i = 1; i <= 15; i++) {
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not idiomatic in Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -3439,11 +3031,8 @@ done
 
 **FizzBuzz in one loop, via `:each`.**
 
-**True:**
 ```true
-= ns
-= out
-1, 15 => :range => ns
+1, 15 => :range = ns
 ns:y, n => n % 15 == 0 ? FizzBuzz = out => :each
 ```
 
@@ -3473,11 +3062,6 @@ let out = "";
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not idiomatic in Datalog
-```
 
 **Kotlin:**
 ```kotlin
@@ -3536,106 +3120,212 @@ for n in $(seq 1 15); do (( n % 15 == 0 )) && out="FizzBuzz"; done
 
 ## <a name="assert"></a>8. Assert
 
-### 37. Assert via `?` + `:error`
+### 37. Assert via `:assert`
 
-**Asserts that `a == b`; errors with the message if false.**
+**Asserts that `a == b`. Success — green, failure — red. Does not pause by default.**
 
-**True:**
 ```true
 5 = a
 5 = b
-!(a == b) ? "a != b" => :error
+a == b, "a must equal b" => :assert
 ```
-**Result:** (no error, since `a == b`)
+**Result:** `:assert` = `"1"`, `LogEntry(type="assert", resolved=true)` — green.
 
 **Python:**
 ```python
 a = 5
 b = 5
-assert a == b, "a != b"
+assert a == b, "a must equal b"
 ```
 
 **Elixir:**
 ```elixir
 a = 5
 b = 5
-if a != b, do: raise "a != b"
+if a != b, do: raise "a must equal b"
 ```
 
 **JavaScript** (topic: errors):
 ```javascript
 const a = 5;
 const b = 5;
-console.assert(a === b, "a != b");
+console.assert(a === b, "a must equal b");
 ```
 
 <details>
 <summary>Other languages (8)</summary>
 
-**Datalog:**
-```datalog
-% constraints via negation
-```
-
 **Kotlin:**
 ```kotlin
 val a = 5
 val b = 5
-check(a == b) { "a != b" }
+check(a == b) { "a must equal b" }
 ```
 
 **Rust:**
 ```rust
 let a = 5;
 let b = 5;
-assert_eq!(a, b, "a != b");
+assert_eq!(a, b, "a must equal b");
 ```
 
 **Haskell:**
 ```haskell
 let a = 5
 let b = 5
-if a /= b then error "a != b" else ()
+if a /= b then error "a must equal b" else ()
 ```
 
 **Lua:**
 ```lua
 local a = 5
 local b = 5
-assert(a == b, "a != b")
+assert(a == b, "a must equal b")
 ```
 
 **Erlang:**
 ```erlang
 A = 5,
 B = 5,
-case A == B of true -> ok; false -> erlang:error("a != b") end.
+case A == B of true -> ok; false -> erlang:error("a must equal b") end.
 ```
 
 **Go:**
 ```go
 a := 5
 b := 5
-if a != b { panic("a != b") }
+if a != b { panic("a must equal b") }
 ```
 
 **Clojure:**
 ```clojure
-(let [a 5 b 5] (assert (= a b) "a != b"))
+(let [a 5 b 5] (assert (= a b) "a must equal b"))
 ```
 
 **C:**
 ```c
 int a = 5;
 int b = 5;
-assert(a == b && "a != b");
+assert(a == b && "a must equal b");
 ```
 
 **Bash:**
 ```bash
 a=5
 b=5
-[ "$a" = "$b" ] || { echo "a != b" >&2; exit 1; }
+[ "$a" = "$b" ] || { echo "a must equal b" >&2; exit 1; }
+```
+
+</details>
+
+---
+
+### 38. Assert with `:pauseAll`
+
+**Asserts, then pauses all agents (whether success or failure).**
+
+```true
+5 = a
+5 = b
+a == b, "a must equal b" => :assert
+:pauseAll
+```
+
+**Python:**
+```python
+a = 5
+b = 5
+assert a == b, "a must equal b"
+# pause all agents
+```
+
+**Elixir:**
+```elixir
+a = 5
+b = 5
+if a != b, do: raise "a must equal b"
+# pause all agents
+```
+
+**JavaScript** (topic: errors):
+```javascript
+const a = 5;
+const b = 5;
+console.assert(a === b, "a must equal b");
+// pause all agents
+```
+
+<details>
+<summary>Other languages (8)</summary>
+
+**Kotlin:**
+```kotlin
+val a = 5
+val b = 5
+check(a == b) { "a must equal b" }
+// pause all agents
+```
+
+**Rust:**
+```rust
+let a = 5;
+let b = 5;
+assert_eq!(a, b, "a must equal b");
+// pause all agents
+```
+
+**Haskell:**
+```haskell
+let a = 5
+let b = 5
+if a /= b then error "a must equal b" else ()
+-- pause all agents
+```
+
+**Lua:**
+```lua
+local a = 5
+local b = 5
+assert(a == b, "a must equal b")
+-- pause all agents
+```
+
+**Erlang:**
+```erlang
+A = 5,
+B = 5,
+case A == B of true -> ok; false -> erlang:error("a must equal b") end,
+% pause all agents
+```
+
+**Go:**
+```go
+a := 5
+b := 5
+if a != b { panic("a must equal b") }
+// pause all agents
+```
+
+**Clojure:**
+```clojure
+(let [a 5 b 5] (assert (= a b) "a must equal b"))
+;; pause all agents
+```
+
+**C:**
+```c
+int a = 5;
+int b = 5;
+assert(a == b && "a must equal b");
+/* pause all agents */
+```
+
+**Bash:**
+```bash
+a=5
+b=5
+[ "$a" = "$b" ] || { echo "a must equal b" >&2; exit 1; }
+# pause all agents
 ```
 
 </details>
@@ -3644,14 +3334,13 @@ b=5
 
 ## <a name="func"></a>9. Functional
 
-### 38. `:map` — apply to every element
+### 39. `:map` — apply to every element
 
 **Doubles every element.**
 
-**True:**
 ```true
 1, 2, 3 = arr
-arr:y, n * 2 => :map => doubles
+arr:y, n * 2 => :map = doubles
 ```
 **Result:** `doubles = "2,4,6"`
 
@@ -3674,12 +3363,6 @@ doubles = Enum.map(arr, &(&1 * 2))
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-doubles(Y) :- arr(X), Y = X * 2.
-arr(1). arr(2). arr(3).
-```
 
 **Kotlin:**
 ```kotlin
@@ -3743,14 +3426,13 @@ for n in "${arr[@]}"; do doubles+=($((n * 2))); done
 
 ---
 
-### 39. `:reduce` — sum
+### 40. `:reduce` — sum
 
 **Sums a container via `:reduce`.**
 
-**True:**
 ```true
 1, 2, 3 = arr
-arr:y, 0, acc + n => :reduce => total
+arr:y, 0, acc + n => :reduce = total
 ```
 **Result:** `total = "6"`
 
@@ -3774,12 +3456,6 @@ total = Enum.reduce(arr, 0, fn n, acc -> acc + n end)
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-total(S) :- S = #sum{X : arr(X)}.
-arr(1). arr(2). arr(3).
-```
 
 **Kotlin:**
 ```kotlin
@@ -3842,221 +3518,26 @@ for n in 1 2 3; do total=$((total + n)); done
 
 ---
 
-### 40. `:fold` — product
-
-**Multiplies a container via `:fold`.**
-
-**True:**
-```true
-1, 2, 3 = arr
-arr:y, 1, acc * n => :fold => prod
-```
-**Result:** `prod = "6"`
-
-**Python:**
-```python
-from functools import reduce
-arr = [1, 2, 3]
-prod = reduce(lambda acc, n: acc * n, arr, 1)
-```
-
-**Elixir:**
-```elixir
-arr = [1, 2, 3]
-prod = Enum.reduce(arr, 1, fn n, acc -> acc * n end)
-```
-
-**Clojure** (topic: collections):
-```clojure
-(def prod (reduce * 1 [1 2 3]))
-```
-
-<details>
-<summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-prod(P) :- P = #prod{X : arr(X)}.
-arr(1). arr(2). arr(3).
-```
-
-**Kotlin:**
-```kotlin
-val arr = listOf(1, 2, 3)
-val prod = arr.fold(1) { acc, n -> acc * n }
-```
-
-**Rust:**
-```rust
-let arr = vec![1, 2, 3];
-let prod = arr.iter().fold(1, |acc, n| acc * n);
-```
-
-**Haskell:**
-```haskell
-let arr = [1, 2, 3]
-let prod = foldl (*) 1 arr
-```
-
-**Lua:**
-```lua
-local arr = {1, 2, 3}
-local prod = 1
-for _, v in ipairs(arr) do prod = prod * v end
-```
-
-**Erlang:**
-```erlang
-Arr = [1, 2, 3],
-Prod = lists:foldl(fun(X, Acc) -> Acc * X end, 1, Arr).
-```
-
-**JavaScript:**
-```javascript
-const arr = [1, 2, 3];
-const prod = arr.reduce((acc, n) => acc * n, 1);
-```
-
-**Go:**
-```go
-arr := []int{1, 2, 3}
-prod := 1
-for _, v := range arr { prod *= v }
-```
-
-**C:**
-```c
-int arr[] = {1, 2, 3};
-int prod = 1;
-for (int i = 0; i < 3; i++) prod *= arr[i];
-```
-
-**Bash:**
-```bash
-prod=1
-for n in 1 2 3; do prod=$((prod * n)); done
-```
-
-</details>
-
----
-
-### 41. `:each` — log every element
-
-**Logs every element (side effects only).**
-
-**True:**
-```true
-1, 2, 3 = arr
-arr:y, n => :log => :each
-```
-**Result:** logs `1`, `2`, `3`
-
-**Python:**
-```python
-arr = [1, 2, 3]
-for n in arr:
-    print(n)
-```
-
-**Elixir:**
-```elixir
-arr = [1, 2, 3]
-Enum.each(arr, fn n -> IO.puts(n) end)
-```
-
-**JavaScript** (topic: loops):
-```javascript
-const arr = [1, 2, 3];
-arr.forEach(n => console.log(n));
-```
-
-<details>
-<summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% side effects not allowed in Datalog
-```
-
-**Kotlin:**
-```kotlin
-val arr = listOf(1, 2, 3)
-arr.forEach { println(it) }
-```
-
-**Rust:**
-```rust
-let arr = vec![1, 2, 3];
-arr.iter().for_each(|n| println!("{}", n));
-```
-
-**Haskell:**
-```haskell
-let arr = [1, 2, 3]
-mapM_ print arr
-```
-
-**Lua:**
-```lua
-local arr = {1, 2, 3}
-for _, v in ipairs(arr) do print(v) end
-```
-
-**Erlang:**
-```erlang
-Arr = [1, 2, 3],
-lists:foreach(fun(X) -> io:format("~p~n", [X]) end, Arr).
-```
-
-**Go:**
-```go
-arr := []int{1, 2, 3}
-for _, v := range arr { fmt.Println(v) }
-```
-
-**Clojure:**
-```clojure
-(doseq [n [1 2 3]] (println n))
-```
-
-**C:**
-```c
-int arr[] = {1, 2, 3};
-for (int i = 0; i < 3; i++) printf("%d\n", arr[i]);
-```
-
-**Bash:**
-```bash
-for n in 1 2 3; do echo "$n"; done
-```
-
-</details>
-
----
-
 ## <a name="rec"></a>10. Recursion via stack
 
 ### 42. Tree traversal via stack
 
 **Traverses a tree (via `:stack:push` / `:stack:pop`) without native recursion.**
 
-**True:**
 ```true
 = stack
-root = node
+node = root
 node => stack:y => :push
 = loop
-stack:y => :size => sz
+stack:y => :size = sz
 sz == 0 ? ^ done
-stack:y => :pop => cur
+stack:y => :pop = cur
 cur => :log
 cur:left => stack:y => :push
 cur:right => stack:y => :push
 ^ loop
 = done
 ```
-**Result:** all nodes visited (DFS)
 
 **Python:**
 ```python
@@ -4093,12 +3574,6 @@ end
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-reach(X) :- node(X).
-reach(Z) :- reach(Y), edge(Y, Z).
-```
 
 **Kotlin:**
 ```kotlin
@@ -4198,7 +3673,6 @@ while (top > 0) {
 
 The board is a `y`-container of 9 cells (`x`, `o`, or `.`). Each move replaces one cell by index (1–9). Win check tests 8 lines.
 
-**True:**
 ```true
 = board
 = turn
@@ -4210,7 +3684,7 @@ x = turn
 = loop
 winner != "" ? ^ done
 move => :log
-move, 1 => :data:charAt => cell
+move, 1 => :data:charAt = cell
 cell == "." ? ^ play
 ^ next
 = play
@@ -4293,11 +3767,6 @@ end
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% tic-tac-toe is not idiomatic in Datalog (state mutation)
-```
 
 **Kotlin:**
 ```kotlin
@@ -4389,7 +3858,7 @@ check_win(B) ->
         [{A,_,_}|_] -> {win, lists:nth(A,B)};
         [] -> none
     end.
-setnth(N, L, V) -> {A, [_|B]} = lists:split(N-1, L), A ++ [V|B].
+setnth(N, L, V) -> {A, [_|B]} = lists:nthtail(N-1, L), A ++ [V|B].
 ```
 
 **JavaScript:**
@@ -4511,30 +3980,22 @@ Given:
 - crit chance `crit` (0–100)
 - crit multiplier `critMult` (e.g. 1.5)
 - enemy armor `armor` (0–100)
+- target HP `hp`
 
 Formula:
 - `raw = dmg * (1 + crit/100 * (critMult - 1))`
 - `final = raw * (1 - armor/100)`
 - expected hits to kill a target with `hp` HP: `ceil(hp / final)`
 
-**True:**
 ```true
-= dmg
-= crit
-= critMult
-= armor
-= raw
-= final
-= hits
-= result
 50 = dmg
 25 = crit
 1.5 = critMult
 30 = armor
-= row
-crit, critMult, dmg, armor => :math => raw
-raw, armor => :math => final
-hp, final => :math => hits
+1000 = hp
+crit, critMult, dmg, armor => :math = raw
+raw, armor => :math = final
+hp, final => :math = hits
 raw, final, hits => :log
 ```
 
@@ -4582,11 +4043,6 @@ print(string.format("raw=%.2f final=%.2f hits=%d", raw, final, hits))
 
 <details>
 <summary>Other languages (8)</summary>
-
-**Datalog:**
-```datalog
-% not idiomatic in Datalog (no arithmetic on floats by default)
-```
 
 **Kotlin:**
 ```kotlin
@@ -4699,3 +4155,182 @@ echo "raw=$raw final=$final hits=$hits"
 </details>
 
 **Note for game designers:** True's strength is **iteration via `^`/`?` + `:map`/`:reduce`/`:fold`/`:each`**. Balance tables are just containers — one row per weapon/enemy, all in a single file. Change a parameter, re-run, get a new table. **No import, no compile, no build** — the file is the spreadsheet.
+
+---
+
+## <a name="ui"></a>13. UI automation
+
+### 49. Type into editor
+
+**Types `hello` into the current editor, one character at a time.**
+
+```true
+hello, editor:current => :simple:type
+:simple = typed
+```
+
+**Result:** `typed` in `Values` = `"1"`. The editor shows `h`, `he`, `hel`, `hell`, `hello` — each 30 ms apart.
+
+**Why no comparison:** no direct equivalent in other languages — this is True + Simple specific (UI automation from code).
+
+---
+
+### 50. Type into search
+
+**Types `world` into the search query field with no delay.**
+
+```true
+world, search:query, 0 => :simple:type
+:simple => :log
+```
+
+**Result:** `1` in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 51. Click buttons
+
+**Clicks `New Cycle`, then `Save`.**
+
+```true
+button:newCycle => :simple:click
+button:save => :simple:click
+:simple = saved
+```
+
+**Result:** `saved` in `Values`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 52. Click tab and agent
+
+**Switches to `main.cycle`, then starts `agent-1`.**
+
+```true
+tab:main.cycle => :simple:click
+agent:agent-1:play => :simple:click
+:simple => :log
+```
+
+**Result:** `1` in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 53. Full scenario — click, type, click
+
+**New cycle → type code → save → start all.**
+
+```true
+button:newCycle => :simple:click
+1 = a, editor:current => :simple:type
+=> :stop, editor:current => :simple:type
+button:save => :simple:click
+button:startAll => :simple:click
+:simple => :log
+```
+
+**Result:** `1` in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 54. Type into terminal
+
+**Opens a real OS terminal, sends a command, types another one character by character.**
+
+```true
+Console => :simple:openTerminal
+ls -la, Console => :simple:sendTerminal
+echo hello, Console => :simple:typeTerminal
+Console => :simple:closeTerminal
+:simple = done
+```
+
+**Result:** `done` in `Values`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 55. Click at coordinates (dangerous)
+
+**Clicks at absolute screen coordinates via AWT Robot.**
+
+```true
+100, 200 => :simple:clickAt
+```
+
+**Result:** click at (100, 200) on screen.
+
+**Warning:** dangerous, runtime only, no headless. May click anything — use only for tests.
+
+---
+
+## <a name="search"></a>14. Search
+
+### 56. Search and log count
+
+**Searches `hello`, logs the number of matching lines.**
+
+```true
+hello => :simple:search
+:simple:search:count => :log
+```
+
+**Result:** `3` (or whatever) in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 57. Search, navigate, log current
+
+**Searches `world`, moves to the next match, logs the current position.**
+
+```true
+world => :simple:search
+:simple:search:next
+:simple:search:current => :log
+```
+
+**Result:** `2` in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 58. Assert no TODOs
+
+**Searches `TODO`, asserts the count is zero.**
+
+```true
+TODO => :simple:search
+:simple:search:count = todoCount
+todoCount == 0, "no TODOs left" => :assert
+```
+
+**Result:** `todoCount` in `Values`, `:assert` in `Log` — green if zero, red otherwise.
+
+**Why no comparison:** no direct equivalent in other languages.
+
+---
+
+### 59. Clear search
+
+**Clears the search query and matches.**
+
+```true
+=> :simple:search:clear
+:simple => :log
+```
+
+**Result:** `1` in `Log`.
+
+**Why no comparison:** no direct equivalent in other languages.

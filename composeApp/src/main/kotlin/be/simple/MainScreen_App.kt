@@ -36,6 +36,7 @@ class MainScreenApp {
         },
         agentCaller = { callerId, name, action, arg -> callAgent(callerId, name, action, arg) },
         simpleCaller = { action, arg -> sys?.simpleAction(action, arg) },
+        snackbarCaller = { text, kind -> SnackbarModel.show(text, kind) },
         callerAgentId = callerAgentId
     )
 
@@ -485,6 +486,8 @@ class MainScreenApp {
                 result.command == ":resume" -> { sys?.startAgent(agent.id); return }
                 result.command == ":delete" -> { removeAgent(agent.id); return }
                 result.command == ":reset" -> { resetFile(agent.fileName); return }
+                result.command == "pauseAll" -> { sys?.pauseAllAgents(); return }
+                result.command == "resumeAll" -> { sys?.startAllAgents(); return }
                 result.command.startsWith("file:") -> {
                     val target = result.command.removePrefix("file:")
                     sys?.switchAgentFile(agent, target)

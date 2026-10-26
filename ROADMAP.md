@@ -25,7 +25,7 @@
 - [x] `:data:y:size` (instead of `:data:length`).
 - [x] Action naming.
 - [x] Prefix `:data` / `:math` is optional.
-- [x] `:error` — error stack, format `<code>, <1|0>, <details>`, `:error:resolve`.
+- [x] `:error` — error stack, format `<code>, <1|0>, <details>`, `:error:resolve`. Does not pause by default.
 - [x] Chains `=>`.
 - [x] Name before use (`= name`).
 - [x] **Terminology:** container / named container.
@@ -39,15 +39,24 @@
 - [x] **`copy`** (`COPY_RE`).
 - [x] **Substitution of named containers** — a name in operation position is substituted and executed.
 - [x] **`=>` is never naming** — only `= name`.
+- [x] **Content is what comes before the operation** — `a + 1 => sum = func1` ≡ `\ a + 1 => sum \ = func1`.
 - [x] **`:map` / `:reduce` / `:fold` / `:each`** — new.
 - [x] **`:foreach` removed.**
 - [x] **`:stack:peek`** — new.
-- [x] **`:simple:*`** — 21 functions.
+- [x] **`:simple:*`** — 36 functions.
+- [x] **`:simple:click`** — UI element click.
+- [x] **`:simple:clickAt`** — absolute screen coordinates (AWT Robot). Dangerous, runtime only, no headless.
+- [x] **`:simple:type`** — character by character (like a human).
+- [x] **`:simple:openTerminal` / `:simple:closeTerminal` / `:simple:sendTerminal` / `:simple:typeTerminal`** — real OS terminal.
+- [x] **`:simple:search:*`** — 8 search functions.
+- [x] **`:pauseAll` / `:resumeAll`** — pause / resume all agents.
+- [x] **`:assert`** — condition check. Success — green, failure — red. Does not pause by default.
 - [x] **`:agent:wait:timeout`**.
 - [x] **Settings:** `:historyLimit`, `:logLimit`, `:strictMode`, `:autoSync`.
-- [x] **Escaping:** `\ ` (line), `\,` / `\;` / `\.` (single separator).
+- [x] **Escaping:** `\ ` (line), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
 - [x] **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
 - [x] **Modules and imports are not needed.**
+- [x] **Any subject starting with `:` is both a function and a container. No exceptions.**
 - [x] **`MrGreen.agent`** — first start.
 - [x] **EN UI + RU localization.**
 
@@ -75,13 +84,17 @@
 - [x] **File buttons** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, all files.
 - [x] **Agent buttons** (`▶⏸⏹⏭⏮`) — bottom, only `.agent`.
 - [x] **`⋯` removed** — everything in the button row.
-- [x] **`NavigateBehavior` removed** — no more "occupied" dialog (agent jumps without reset, or `occupied` error).
+- [x] **`NavigateBehavior` removed** — no more "occupied" dialog.
 - [x] **`:error` red/green highlight** in editor and log.
+- [x] **`:assert` yellow/red highlight** in editor and log. Filter `Asserts` in log.
 - [x] **Syntax highlight** (simple) — `TrueHighlighter`.
 - [x] **EN/RU switcher** (Settings → Language).
+- [x] **TerminalPanel** — Log / Terminal tabs (real OS terminal).
+- [x] **SnackbarHost** — warning/error/info snackbars.
 
 ### Infrastructure
 - [x] `SAMPLES.md` with `!!`.
+- [x] `::before` / `::after` — setup/teardown in `SAMPLES.md`.
 - [x] `GoldenTests` (parallel).
 - [x] `true-core` — separate JVM module.
 - [x] Unit tests `Interpreter`.
@@ -95,17 +108,21 @@
 
 ## Plans
 
+- [ ] **Mouse/keyboard recording** — record user actions (mouse, keyboard, terminal) into a scenario (`.cycle` / `.json`), play back via `:simple:clickAt` / `:simple:type` / `:simple:sendTerminal`. UI: `⏺` (Record) / `⏹` (Stop) in `MenuBar`. Format: `#record` block in `.cycle` or separate `.record` file. Functions: `:simple:record:start`, `:simple:record:stop`, `:simple:record:save`, `:simple:record:play`, `:simple:record:list`.
 - [ ] **Rust + egui.** Port `Interpreter` to Rust. Goal: remove JVM, cold start ~5–50 ms.
 - [ ] **Full syntax highlight** — tokenization of all keywords and containers.
 - [ ] **MD renderer** in `DocDialog` — highlight for `true` / `python` / etc.
 - [ ] `Scheme` / `Table` — real views.
-- [ ] Interactive Tutorial (advanced).
-- [ ] JSON Schema (subset).
 - [ ] Publish `true-core` to Maven.
 - [ ] **Rust port of `true-core`.**
 - [ ] Multilingual (Lua via LuaJ, JS via Rhino).
 - [ ] External interpreter via WebSocket.
 - [ ] `.true` — project settings file.
+- [ ] **Screen reader** support in `TerminalPanel` and `Log`.
+- [ ] **PTY support** for `:simple:openTerminal` (JNA).
+- [ ] **ANSI color rendering** in `TerminalPanel`.
+- [ ] **Recording playback speed control** (`:simple:record:play, speed`).
+
 
 ## What we won't do (and why)
 
@@ -136,3 +153,4 @@
 - **External interpreter via WebSocket** — for heavy languages (Python, Erlang).
 - **Dark theme**, **CI**, **publishing** `true-core`.
 - **Interactive Tutorial** — advanced, interactive.
+- **Mouse/keyboard recording** — automate UI tests, record scenarios, play back.

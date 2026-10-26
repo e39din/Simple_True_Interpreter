@@ -5,18 +5,20 @@ Language version: **0.11.0**
 ## How to read
 
 - **Description** — one sentence.
-- **True** — the sample. The result is in `results[...]`.
+- **True** — the sample. The result is in the container `:name`.
 - **Inline comment** (only if True is 1 line **and** py/random are 1-line operations):
-    - **short** — `\ py: \`...\` | <random>: \`...\`` (same line)
-    - **long** — `\ py: \`...\`` on the **next line**
-    - **2+ operations** or **multi-line** in py/random — comment omitted.
-    - **random** — not py/rust/bash.
-    - **no imports** (`import`, `require`, `#include`, `using`, `use`).
+  - **short** — `\ py: \`...\` | <random>: \`...\`` (same line)
+  - **long** — `\ py: \`...\`` on the **next line**
+  - **2+ operations** or **multi-line** in py/random — comment omitted.
+  - **random** — not py/rust/bash.
+  - **no imports** (`import`, `require`, `#include`, `using`, `use`).
 - **`<details>`** — all 12 languages (Python, Rust, Bash, Elixir, C, Kotlin, Haskell, Lua, Erlang, JavaScript, Go, Clojure).
 
-**Naming rule:** `= name` is naming. `=>` is never naming. `chain => name` — error if `name` is not declared. `:math`, `:data:*`, `:error`, `:json:*`, `:file:*`, `:api:*` — the result is **already** in `results[...]`; to give a name — `= name` separately, or `:math = name`.
+**Naming rule:** `= name` is naming. `=>` is never naming. `chain => name` — error if `name` is not declared.
 
-**System names are reserved** (`result`, `parameters`, `nothing`, `step`, `cycle`, `speed`, `color`, `error`, `log`, `message`, `size`, `s`, `math`, `data`, `json`, `file`, `api`, `console`, `simple`, `agent`, `run`, `range`, `repeat`, `activeTab`, `path`, `source`, `test`, `return`, `assert`, `call`, `filter`, `matches`, `map`, `reduce`, `fold`, `each`).
+**Any subject starting with `:` is both a function and a container. No exceptions.** `:name` — substitution (empty string if not set). `:name => dst` / `:name = dst` — naming. `dst = :name` — error.
+
+**System names are reserved** (`result`, `parameters`, `nothing`, `step`, `cycle`, `speed`, `color`, `error`, `log`, `message`, `size`, `s`, `math`, `data`, `json`, `file`, `api`, `console`, `simple`, `agent`, `run`, `range`, `repeat`, `activeTab`, `path`, `source`, `test`, `return`, `call`, `filter`, `matches`, `map`, `reduce`, `fold`, `each`).
 
 ## Table of contents
 
@@ -29,10 +31,12 @@ Language version: **0.11.0**
 7. [Console — `:console`](#console)
 8. [I/O — `:save` / `:load` / `:get` / `:post`](#io)
 9. [Errors — `:error`](#error)
-10. [Agents — `:agent`](#agent)
-11. [Interpreter — `:simple`](#simple)
-12. [Settings](#settings)
-13. [Meta](#meta)
+10. [Assert — `:assert`](#assert)
+11. [Pause / Resume — `:pauseAll` / `:resumeAll`](#pause)
+12. [Agents — `:agent`](#agent)
+13. [Interpreter — `:simple`](#simple)
+14. [Settings](#settings)
+15. [Meta](#meta)
 
 ---
 
@@ -40,7 +44,7 @@ Language version: **0.11.0**
 
 ### `:math`
 
-**Evaluates a numeric expression (result in `results["math"]`).**
+**Evaluates a numeric expression.**
 
 ```true
 1 + 2 * 3 => :math \ py: `a = 1 + 2 * 3` | elixir: `a = 1 + 2 * 3`
@@ -70,7 +74,7 @@ Language version: **0.11.0**
 
 ### `:sum` / `:math:sum`
 
-**Sums all numbers (result in `results["math:sum"]`).**
+**Sums all numbers.**
 
 ```true
 1, 2, 3, 4, 5 => :sum \ py: `total = sum([1, 2, 3, 4, 5])` | kotlin: `val total = listOf(1, 2, 3, 4, 5).sum()`
@@ -100,7 +104,7 @@ Language version: **0.11.0**
 
 ### `:min` / `:math:min`
 
-**Returns the minimum value (result in `results["math:min"]`).**
+**Returns the minimum value.**
 
 ```true
 3, 7, 2, 9, 4 => :min
@@ -131,7 +135,7 @@ Language version: **0.11.0**
 
 ### `:max` / `:math:max`
 
-**Returns the maximum value (result in `results["math:max"]`).**
+**Returns the maximum value.**
 
 ```true
 3, 7, 2, 9, 4 => :max
@@ -162,7 +166,7 @@ Language version: **0.11.0**
 
 ### `:avg` / `:math:avg`
 
-**Returns the average (result in `results["math:avg"]`).**
+**Returns the average.**
 
 ```true
 1, 2, 3, 4, 5 => :avg
@@ -193,7 +197,7 @@ Language version: **0.11.0**
 
 ### `:product` / `:math:product`
 
-**Multiplies all numbers (result in `results["math:product"]`).**
+**Multiplies all numbers.**
 
 ```true
 1, 2, 3, 4, 5 => :product \ py: `a = math.prod([1, 2, 3, 4, 5])` | haskell: `let a = product [1,2,3,4,5]`
@@ -223,7 +227,7 @@ Language version: **0.11.0**
 
 ### `:count` / `:math:count`
 
-**Counts elements (result in `results["math:count"]`).**
+**Counts elements.**
 
 ```true
 1, 2, 3, 4, 5 => :count \ py: `a = len([1, 2, 3, 4, 5])` | javascript: `const a = [1,2,3,4,5].length;`
@@ -253,7 +257,7 @@ Language version: **0.11.0**
 
 ### `:math:sort` (numbers)
 
-**Sorts numbers ascending (result in `results["math:sort"]`).**
+**Sorts numbers ascending.**
 
 ```true
 3, 1, 2 => :math:sort \ py: `a = sorted([3, 1, 2])` | clojure: `(def a (sort [3 1 2]))`
@@ -283,7 +287,7 @@ Language version: **0.11.0**
 
 ### `:math:popcount`
 
-**Counts 1 bits (result in `results["math"]`).**
+**Counts 1 bits.**
 
 ```true
 popcount(255) => :math \ py: `a = bin(255).count("1")` | c: `int a = __builtin_popcount(255);`
@@ -315,7 +319,7 @@ popcount(255) => :math \ py: `a = bin(255).count("1")` | c: `int a = __builtin_p
 
 ### `:data:substring`
 
-**Extracts a substring (result in `results["substring"]`).**
+**Extracts a substring.**
 
 ```true
 hello => :data:substring \ py: `out = "hello"[0:5]` | rust: `let out = &"hello"[0..5];`
@@ -345,7 +349,7 @@ hello => :data:substring \ py: `out = "hello"[0:5]` | rust: `let out = &"hello"[
 
 ### `:data:indexOf`
 
-**Finds a substring position (1-based, result in `results["indexOf"]`).**
+**Finds a substring position (1-based).**
 
 ```true
 hello, ll => :data:indexOf \ py: `out = "hello".find("ll") + 1` | lua: `local out = string.find("hello", "ll")`
@@ -375,7 +379,7 @@ hello, ll => :data:indexOf \ py: `out = "hello".find("ll") + 1` | lua: `local ou
 
 ### `:data:replace`
 
-**Replaces all occurrences (result in `results["replace"]`).**
+**Replaces all occurrences.**
 
 ```true
 hello, ll, LL => :data:replace \ py: `out = "hello".replace("ll", "LL")` | haskell: `let out = "heLLo"`
@@ -405,7 +409,7 @@ hello, ll, LL => :data:replace \ py: `out = "hello".replace("ll", "LL")` | haske
 
 ### `:data:lower`
 
-**Converts to lowercase (result in `results["lower"]`).**
+**Converts to lowercase.**
 
 ```true
 HELLO => :data:lower \ py: `out = "HELLO".lower()` | lua: `local out = string.lower("HELLO")`
@@ -435,7 +439,7 @@ HELLO => :data:lower \ py: `out = "HELLO".lower()` | lua: `local out = string.lo
 
 ### `:data:upper`
 
-**Converts to uppercase (result in `results["upper"]`).**
+**Converts to uppercase.**
 
 ```true
 hello => :data:upper \ py: `out = "hello".upper()` | lua: `local out = string.upper("hello")`
@@ -465,7 +469,7 @@ hello => :data:upper \ py: `out = "hello".upper()` | lua: `local out = string.up
 
 ### `:data:trim`
 
-**Removes surrounding whitespace (result in `results["trim"]`).**
+**Removes surrounding whitespace.**
 
 ```true
 "  hi  " => :data:trim \ py: `out = "  hi  ".strip()` | kotlin: `val out = "  hi  ".trim()`
@@ -495,7 +499,7 @@ hello => :data:upper \ py: `out = "hello".upper()` | lua: `local out = string.up
 
 ### `:data:charAt`
 
-**Gets a char by index (1-based, result in `results["charAt"]`).**
+**Gets a char by index (1-based).**
 
 ```true
 hello, 2 => :data:charAt \ py: `out = "hello"[1]` | javascript: `const out = "hello".charAt(1);`
@@ -525,7 +529,7 @@ hello, 2 => :data:charAt \ py: `out = "hello"[1]` | javascript: `const out = "he
 
 ### `:size` / `:s`
 
-**Returns size by axis (result in `results["size"]`).**
+**Returns size by axis.**
 
 ```true
 hello => :s \ py: `out = len("hello")` | rust: `let out = "hello".len();`
@@ -555,7 +559,7 @@ hello => :s \ py: `out = len("hello")` | rust: `let out = "hello".len();`
 
 ### `:data:reverse`
 
-**Reverses a container (result in `results["reverse"]`).**
+**Reverses a container.**
 
 ```true
 hello => :data:reverse \ py: `out = "hello"[::-1]` | elixir: `out = String.reverse("hello")`
@@ -585,7 +589,7 @@ hello => :data:reverse \ py: `out = "hello"[::-1]` | elixir: `out = String.rever
 
 ### `:push`
 
-**Appends to a container (result in `results["push"]`).**
+**Appends to a container.**
 
 ```true
 1, 2 = arr
@@ -616,7 +620,7 @@ arr:y, 3 => :push
 
 ### `:pop`
 
-**Removes and returns the top (result in `results["pop"]`, `results["pop_rest"]`).**
+**Removes and returns the top.**
 
 ```true
 1, 2, 3 = arr
@@ -642,11 +646,45 @@ arr:y => :pop
 | Clojure | `(def arr [1 2 3]); (def top (peek arr)); (def rest (pop arr))` |
 
 </details>
+
+---
+
+### `:peek`
+
+**Returns top without removal.**
+
+```true
+1, 2, 3 = arr
+arr:y => :peek
+```
+
+<details>
+<summary>Other languages</summary>
+
+| Name | Code |
+|---|---|
+| Python | `arr = [1, 2, 3]; top = arr[-1]` |
+| Rust | `let arr = vec![1, 2, 3]; let top = arr.last();` |
+| Bash | `arr=(1 2 3); top="${arr[-1]}"` |
+| Elixir | `arr = [1, 2, 3]; top = List.last(arr)` |
+| C | `int arr[3]={1,2,3}; int top=arr[2];` |
+| Kotlin | `val arr = listOf(1, 2, 3); val top = arr.last()` |
+| Haskell | `let arr = [1, 2, 3]; let top = last arr` |
+| Lua | `local arr = {1, 2, 3}; local top = arr[#arr]` |
+| Erlang | `Top = lists:last(Arr).` |
+| JavaScript | `const arr = [1, 2, 3]; const top = arr[arr.length - 1];` |
+| Go | `arr := []int{1, 2, 3}; top := arr[len(arr)-1]` |
+| Clojure | `(def top (peek [1 2 3]))` |
+
+</details>
+
+---
+
 ## <a name="func"></a>3. Functional — `:map` / `:reduce` / `:fold` / `:each`
 
 ### `:map`
 
-**Applies an expression to every element (result in `results["map"]`).**
+**Applies an expression to every element.**
 
 ```true
 1, 2, 3 = arr
@@ -677,7 +715,7 @@ arr:y, n * 2 => :map
 
 ### `:reduce`
 
-**Folds a container with an accumulator (result in `results["reduce"]`).**
+**Folds a container with an accumulator.**
 
 ```true
 1, 2, 3 = arr
@@ -708,7 +746,7 @@ arr:y, 0, acc + n => :reduce
 
 ### `:fold`
 
-**Synonym for `:reduce` (result in `results["fold"]`).**
+**Synonym for `:reduce`.**
 
 ```true
 1, 2, 3 = arr
@@ -739,7 +777,7 @@ arr:y, 1, acc * n => :fold
 
 ### `:each`
 
-**Executes an operation for every element (side effects only).**
+**Executes an operation for every element.**
 
 ```true
 1, 2, 3 = arr
@@ -772,7 +810,7 @@ arr:y, n => :log => :each
 
 ### `:json:get`
 
-**Gets a value from JSON by key (result in `results["json"]`).**
+**Gets a value from JSON by key.**
 
 ```true
 {'name':'test','value':42} = json
@@ -790,7 +828,7 @@ json, name => :json:get
 | Elixir | `result = decode!("{\"name\":\"test\"}")["name"]` |
 | C | `/* via jansson */` |
 | Kotlin | `val result = Json.parseToJsonElement("""{"name":"test"}""").jsonObject["name"]?.toString()` |
-| Haskell | `let result = do { obj <- decodeStrict "{\"name\":\"test\"}" :: Maybe Value; withObject "o" (\o -> o .: "name") obj }` |
+| Haskell | `-- via aeson` |
 | Lua | `local result = decode('{"name":"test"}').name` |
 | Erlang | `Result = proplists:get_value(<<"name">>, jsx:decode(<<"{\"name\":\"test\"}">>)).` |
 | JavaScript | `const result = JSON.parse('{"name":"test"}').name;` |
@@ -803,7 +841,7 @@ json, name => :json:get
 
 ### `:json:set`
 
-**Sets a value in JSON by key (result in `results["json"]`).**
+**Sets a value in JSON by key.**
 
 ```true
 {'a':1} = json
@@ -832,73 +870,11 @@ json, a, 2 => :json:set
 
 ---
 
-### `:json:names`
-
-**Gets all top-level keys (result in `results["json"]`).**
-
-```true
-{'a':1,'b':2} = json
-json => :json:names
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `result = ",".join(loads('{"a":1,"b":2}').keys())` |
-| Rust | `let result = data.as_object().unwrap().keys().cloned().collect::<Vec<_>>().join(",");` |
-| Bash | `result=$(echo '{"a":1,"b":2}' \| jq -r 'keys_unsorted \| join(",")')` |
-| Elixir | `result = Map.keys(decode!("{\"a\":1,\"b\":2}")) \|> Enum.join(",")` |
-| C | `/* via jansson */` |
-| Kotlin | `val result = Json.parseToJsonElement("""{"a":1,"b":2}""").jsonObject.keys.joinToString(",")` |
-| Haskell | `-- via aeson` |
-| Lua | `local keys={}; for k in pairs(decode('{"a":1,"b":2}')) do table.insert(keys,k) end; local result=table.concat(keys,",")` |
-| Erlang | `Result = string:join([K \|\| {K,_} <- jsx:decode(<<"{\"a\":1,\"b\":2}">>)], ",").` |
-| JavaScript | `const result = Object.keys(JSON.parse('{"a":1,"b":2}')).join(",");` |
-| Go | `keys := make([]string, 0, len(data)); for k := range data { keys = append(keys, k) }; result := strings.Join(keys, ",")` |
-| Clojure | `(def result (clojure.string/join "," (keys (parse-string "{\"a\":1,\"b\":2}" true))))` |
-
-</details>
-
----
-
-### `:json:values`
-
-**Gets all top-level values (result in `results["json"]`).**
-
-```true
-{'a':1,'b':2} = json
-json => :json:values
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `result = ",".join(str(v) for v in loads('{"a":1,"b":2}').values())` |
-| Rust | `let result = data.as_object().unwrap().values().map(|v| v.to_string()).collect::<Vec<_>>().join(",");` |
-| Bash | `result=$(echo '{"a":1,"b":2}' \| jq -r '[.[]] \| join(",")')` |
-| Elixir | `result = Map.values(decode!("{\"a\":1,\"b\":2}")) \|> Enum.join(",")` |
-| C | `/* via jansson */` |
-| Kotlin | `val result = Json.parseToJsonElement("""{"a":1,"b":2}""").jsonObject.values.joinToString(",") { it.toString() }` |
-| Haskell | `-- via aeson` |
-| Lua | `local values={}; for _,v in pairs(decode('{"a":1,"b":2}')) do table.insert(values,tostring(v)) end; local result=table.concat(values,",")` |
-| Erlang | `Result = string:join([integer_to_list(V) \|\| {_,V} <- jsx:decode(<<"{\"a\":1,\"b\":2}">>)], ",").` |
-| JavaScript | `const result = Object.values(JSON.parse('{"a":1,"b":2}')).join(",");` |
-| Go | `vals := make([]string, 0, len(data)); for _,v := range data { vals = append(vals, fmt.Sprint(v)) }; result := strings.Join(vals, ",")` |
-| Clojure | `(def result (clojure.string/join "," (vals (parse-string "{\"a\":1,\"b\":2}" true))))` |
-
-</details>
-
----
-
 ## <a name="file"></a>5. Files — `:file`
 
 ### `:file:create`
 
-**Creates a new file with content (result in `results["file"]`).**
+**Creates a new file with content.**
 
 ```true
 /tmp/out.txt, hello => :file:create
@@ -909,7 +885,7 @@ json => :json:values
 
 | Name | Code |
 |---|---|
-| Python | `r = 1 if not exists("/tmp/out.txt") else -1; open("/tmp/out.txt","x").write("hello")` |
+| Python | `open("/tmp/out.txt","x").write("hello")` |
 | Rust | `OpenOptions::new().write(true).create_new(true).open("/tmp/out.txt")?.write_all(b"hello")?;` |
 | Bash | `{ printf 'hello' > /tmp/out.txt; } 2>/dev/null` |
 | Elixir | `File.write("/tmp/out.txt", "hello", [:exclusive])` |
@@ -928,7 +904,7 @@ json => :json:values
 
 ### `:file:read`
 
-**Reads a file (result in `results["file"]`).**
+**Reads a file.**
 
 ```true
 /tmp/out.txt => :file:read
@@ -958,7 +934,7 @@ json => :json:values
 
 ### `:file:update`
 
-**Writes content to a file (result in `results["file"]`).**
+**Writes content to a file.**
 
 ```true
 /tmp/out.txt, world => :file:update
@@ -988,7 +964,7 @@ json => :json:values
 
 ### `:file:delete`
 
-**Deletes a file (result in `results["file"]`).**
+**Deletes a file.**
 
 ```true
 /tmp/out.txt => :file:delete
@@ -1016,39 +992,9 @@ json => :json:values
 
 ---
 
-### `:file:list`
-
-**Lists files in a directory (result in `results["file"]`).**
-
-```true
-/tmp => :file:list
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `out = ",".join(listdir("/tmp"))` |
-| Rust | `let out = std::fs::read_dir("/tmp")?.map(\|e\| e.unwrap().file_name().into_string().unwrap()).collect::<Vec<_>>().join(",");` |
-| Bash | `out=$(ls /tmp \| paste -sd, -)` |
-| Elixir | `{:ok, files} = File.ls("/tmp"); out = Enum.join(files, ",")` |
-| C | `/* via dirent.h */` |
-| Kotlin | `val out = File("/tmp").list()?.joinToString(",") ?: ""` |
-| Haskell | `files <- listDirectory "/tmp"; let out = intercalate "," files` |
-| Lua | `local p = io.popen("ls /tmp"); local out = p:read("*a"); p:close()` |
-| Erlang | `{ok, Files} = file:list_dir("/tmp"), Out = string:join(Files, ",").` |
-| JavaScript | `const out = readdirSync("/tmp").join(",");` |
-| Go | `entries, _ := os.ReadDir("/tmp"); names := []string{}; for _, e := range entries { names = append(names, e.Name()) }; out := strings.Join(names, ",")` |
-| Clojure | `(def out (clojure.string/join "," (.list (clojure.java.io/file "/tmp"))))` |
-
-</details>
-
----
-
 ### `:file:exists`
 
-**Checks if a file exists (result in `results["file"]`).**
+**Checks if a file exists.**
 
 ```true
 /tmp/out.txt => :file:exists
@@ -1076,99 +1022,9 @@ json => :json:values
 
 ---
 
-### `:file:data`
-
-**Reads or writes a file (symmetric).**
-
-```true
-/tmp/out.txt => :file:data
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `data = open("/tmp/out.txt").read()` |
-| Rust | `let data = std::fs::read_to_string("/tmp/out.txt")?;` |
-| Bash | `data=$(cat /tmp/out.txt)` |
-| Elixir | `{:ok, data} = File.read("/tmp/out.txt")` |
-| C | `/* via fopen */` |
-| Kotlin | `val data = File("/tmp/out.txt").readText()` |
-| Haskell | `data' <- readFile "/tmp/out.txt"` |
-| Lua | `local f = io.open("/tmp/out.txt","r"); local data = f:read("*a"); f:close()` |
-| Erlang | `{ok, Bin} = file:read_file("/tmp/out.txt"), Data = binary_to_list(Bin).` |
-| JavaScript | `const data = readFileSync("/tmp/out.txt", "utf8");` |
-| Go | `data, _ := os.ReadFile("/tmp/out.txt")` |
-| Clojure | `(def data (slurp "/tmp/out.txt"))` |
-
-</details>
-
----
-
-### `:file:origin`
-
-**Reads or writes the `.orig` version of a file.**
-
-```true
-/tmp/out.txt => :file:origin
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `data = open("/tmp/out.txt.orig").read()` |
-| Rust | `let data = std::fs::read_to_string("/tmp/out.txt.orig")?;` |
-| Bash | `data=$(cat /tmp/out.txt.orig)` |
-| Elixir | `{:ok, data} = File.read("/tmp/out.txt.orig")` |
-| C | `/* via fopen */` |
-| Kotlin | `val data = File("/tmp/out.txt.orig").readText()` |
-| Haskell | `data' <- readFile "/tmp/out.txt.orig"` |
-| Lua | `local f = io.open("/tmp/out.txt.orig","r"); local data = f:read("*a"); f:close()` |
-| Erlang | `{ok, Bin} = file:read_file("/tmp/out.txt.orig").` |
-| JavaScript | `const data = readFileSync("/tmp/out.txt.orig", "utf8");` |
-| Go | `data, _ := os.ReadFile("/tmp/out.txt.orig")` |
-| Clojure | `(def data (slurp "/tmp/out.txt.orig"))` |
-
-</details>
-
----
-
-### `:file:lines`
-
-**Reads file lines (result in `results["file"]`).**
-
-```true
-/tmp/out.txt => :file:lines
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `lines = open("/tmp/out.txt").read().splitlines()` |
-| Rust | `let lines: Vec<String> = std::fs::read_to_string("/tmp/out.txt")?.lines().map(String::from).collect();` |
-| Bash | `data=$(cat /tmp/out.txt)` |
-| Elixir | `{:ok, data} = File.read("/tmp/out.txt"); lines = String.split(data, "\n")` |
-| C | `/* via fgets */` |
-| Kotlin | `val lines = File("/tmp/out.txt").readLines()` |
-| Haskell | `lines' <- lines <$> readFile "/tmp/out.txt"` |
-| Lua | `local lines = {}; for l in io.lines("/tmp/out.txt") do table.insert(lines, l) end` |
-| Erlang | `{ok, Bin} = file:read_file("/tmp/out.txt"), Lines = string:split(binary_to_list(Bin), "\n", all).` |
-| JavaScript | `const lines = readFileSync("/tmp/out.txt", "utf8").split("\n");` |
-| Go | `data, _ := os.ReadFile("/tmp/out.txt"); lines := strings.Split(string(data), "\n")` |
-| Clojure | `(def lines (clojure.string/split-lines (slurp "/tmp/out.txt")))` |
-
-</details>
-
----
-
 ### `:path`
 
-**Returns the absolute path of a file (result in `results["path"]`).**
+**Returns the absolute path of a file.**
 
 ```true
 :file:main.cycle => :path \ py: `p = abspath("main.cycle")` | elixir: `p = Path.expand("main.cycle")`
@@ -1196,41 +1052,11 @@ json => :json:values
 
 ---
 
-### `file:a => file:b` / `file:a -> file:b` / `file:a => var` / `var => file:b`
-
-**Copy, move, read, write files.**
-
-```true
-file:a.txt => file:b.txt
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `copy("a.txt", "b.txt")` |
-| Rust | `std::fs::copy("a.txt", "b.txt")?;` |
-| Bash | `cp a.txt b.txt` |
-| Elixir | `File.cp!("a.txt", "b.txt")` |
-| C | `/* manual */` |
-| Kotlin | `File("a.txt").copyTo(File("b.txt"))` |
-| Haskell | `copyFile "a.txt" "b.txt"` |
-| Lua | `os.execute("cp a.txt b.txt")` |
-| Erlang | `file:copy("a.txt", "b.txt").` |
-| JavaScript | `copyFileSync("a.txt", "b.txt");` |
-| Go | `data, _ := os.ReadFile("a.txt"); os.WriteFile("b.txt", data, 0644)` |
-| Clojure | `(clojure.java.io/copy (clojure.java.io/file "a.txt") (clojure.java.io/file "b.txt"))` |
-
-</details>
-
----
-
 ## <a name="api"></a>6. Network — `:api`
 
 ### `:api:get`
 
-**HTTP GET (result in `results["api:get"]`).**
+**HTTP GET.**
 
 ```true
 https://example.com/health => :api:get \ py: `out = get("https://example.com/health").text` | elixir: `{:ok, resp} = HTTPoison.get("https://example.com/health")`
@@ -1260,7 +1086,7 @@ https://example.com/health => :api:get \ py: `out = get("https://example.com/hea
 
 ### `:api:post`
 
-**HTTP POST with body (result in `results["api:post"]`).**
+**HTTP POST with body.**
 
 ```true
 https://example.com/api, {"a":1} => :api:post
@@ -1277,7 +1103,7 @@ https://example.com/api, {"a":1} => :api:post
 | Elixir | `{:ok, resp} = HTTPoison.post("https://example.com/api", ~s({"a":1})); out = if resp.status_code < 300, do: 1, else: -1` |
 | C | `/* via libcurl */` |
 | Kotlin | `val conn = java.net.URL("https://example.com/api").openConnection() as java.net.HttpURLConnection; conn.requestMethod = "POST"; conn.doOutput = true; conn.outputStream.write("""{"a":1}""".toByteArray()); val out = if (conn.responseCode < 300) 1 else -1` |
-| Haskell | `req <- parseRequest "POST https://example.com/api"; resp <- httpLBS =<< setRequestBodyString "{\"a\":1}" <$> pure req; let out = if getResponseStatusCode resp < 300 then 1 else -1` |
+| Haskell | `-- same pattern as GET` |
 | Lua | `-- via luasocket` |
 | Erlang | `{ok,{{_,Code,_},_,_}} = httpc:request(post, {"https://example.com/api", [], "application/json", <<"{\"a\":1}">>}, [], []), Out = case Code < 300 of true -> 1; false -> -1 end.` |
 | JavaScript | `fetch("https://example.com/api", { method: "POST", body: '{"a":1}' }).then(r => console.log(r.ok ? 1 : -1));` |
@@ -1288,39 +1114,11 @@ https://example.com/api, {"a":1} => :api:post
 
 ---
 
-### `:api:put` / `:api:delete` / `:api:patch` / `:api:websocket`
-
-**Other HTTP methods and WebSocket (result in `results["api:<method>"]`).**
-
-```true
-https://example.com/api, {"a":2} => :api:put
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `put("https://example.com/api", data='{"a":2}')` |
-| Rust | `Client::new().put("https://example.com/api").body(r#"{"a":2}"#).send().await?;` |
-| Bash | `curl -X PUT -d '{"a":2}' https://example.com/api` |
-| Elixir | `HTTPoison.put("https://example.com/api", ~s({"a":2}))` |
-| C | `/* via libcurl */` |
-| Kotlin | `// same pattern as :api:post` |
-| Haskell | `-- same pattern` |
-| Lua | `-- via luasocket` |
-| Erlang | `httpc:request(put, {"https://example.com/api", [], "application/json", <<"{\"a\":2}">>}, [], []).` |
-| JavaScript | `fetch("https://example.com/api", { method: "PUT", body: '{"a":2}' });` |
-| Go | `req, _ := http.NewRequest("PUT", "https://example.com/api", strings.NewReader(`{"a":2}`)); http.DefaultClient.Do(req)` |
-| Clojure | `(http/put "https://example.com/api" {:body "{\"a\":2}"})` |
-
-</details>
-
 ## <a name="console"></a>7. Console — `:console`
 
 ### `:console`
 
-**Executes an OS command (result in `results["console"]`).**
+**Executes an OS command.**
 
 ```true
 ls -la => :console
@@ -1352,7 +1150,7 @@ ls -la => :console
 
 ### `:save`
 
-**Saves data via HTTP POST (result in `results["save"]`).**
+**Saves data via HTTP POST.**
 
 ```true
 /tmp/out.txt, hello => :save
@@ -1369,7 +1167,7 @@ ls -la => :console
 | Elixir | `{:ok, resp} = HTTPoison.post("/tmp/out.txt", "hello"); out = if resp.status_code < 300, do: 1, else: -1` |
 | C | `/* via libcurl */` |
 | Kotlin | `val conn = java.net.URL("/tmp/out.txt").openConnection() as java.net.HttpURLConnection; conn.requestMethod = "POST"; conn.doOutput = true; conn.outputStream.write("hello".toByteArray()); val out = if (conn.responseCode < 300) 1 else -1` |
-| Haskell | `resp <- httpLBS =<< setRequestBodyString "hello" <$> parseRequest "POST /tmp/out.txt"; let out = if getResponseStatusCode resp < 300 then 1 else -1` |
+| Haskell | `-- same pattern as POST` |
 | Lua | `-- via luasocket` |
 | Erlang | `httpc:request(post, {"/tmp/out.txt", [], "", "hello"}, [], []).` |
 | JavaScript | `fetch("/tmp/out.txt", { method: "POST", body: "hello" }).then(r => console.log(r.ok ? 1 : -1));` |
@@ -1382,7 +1180,7 @@ ls -la => :console
 
 ### `:load`
 
-**Loads data via HTTP GET (result in `results["load"]`).**
+**Loads data via HTTP GET.**
 
 ```true
 /tmp/in.txt => :load
@@ -1410,71 +1208,11 @@ ls -la => :console
 
 ---
 
-### `:get`
-
-**HTTP GET (result in `results["get"]`).**
-
-```true
-/tmp/in.txt => :get
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `out = get("/tmp/in.txt").text` |
-| Rust | `let out = reqwest::get("/tmp/in.txt").await?.text().await?;` |
-| Bash | `out=$(curl -s /tmp/in.txt)` |
-| Elixir | `{:ok, resp} = HTTPoison.get("/tmp/in.txt"); out = resp.body` |
-| C | `/* via libcurl */` |
-| Kotlin | `val out = java.net.URL("/tmp/in.txt").readText()` |
-| Haskell | `out <- getResponseBody <$> httpLBS "/tmp/in.txt"` |
-| Lua | `local out = require("socket.http").request("/tmp/in.txt")` |
-| Erlang | `{ok,{{_,200,_},_,Body}} = httpc:request("/tmp/in.txt"), Out = Body.` |
-| JavaScript | `const out = await (await fetch("/tmp/in.txt")).text();` |
-| Go | `resp, _ := http.Get("/tmp/in.txt"); body, _ := io.ReadAll(resp.Body); out := string(body)` |
-| Clojure | `(def out (:body (http/get "/tmp/in.txt")))` |
-
-</details>
-
----
-
-### `:post`
-
-**HTTP POST with body (result in `results["post"]`).**
-
-```true
-/tmp/out.txt, hello => :post
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `r = post("/tmp/out.txt", data="hello"); out = 1 if r.ok else -1` |
-| Rust | `let resp = Client::new().post("/tmp/out.txt").body("hello").send().await?; let out = if resp.status().is_success() { 1 } else { -1 };` |
-| Bash | `curl -s -o /dev/null -X POST -d 'hello' /tmp/out.txt && out=1 \|\| out=-1` |
-| Elixir | `{:ok, resp} = HTTPoison.post("/tmp/out.txt", "hello"); out = if resp.status_code < 300, do: 1, else: -1` |
-| C | `/* via libcurl */` |
-| Kotlin | `val conn = java.net.URL("/tmp/out.txt").openConnection() as java.net.HttpURLConnection; conn.requestMethod = "POST"; conn.doOutput = true; conn.outputStream.write("hello".toByteArray()); val out = if (conn.responseCode < 300) 1 else -1` |
-| Haskell | `resp <- httpLBS =<< setRequestBodyString "hello" <$> parseRequest "POST /tmp/out.txt"; let out = if getResponseStatusCode resp < 300 then 1 else -1` |
-| Lua | `-- via luasocket` |
-| Erlang | `httpc:request(post, {"/tmp/out.txt", [], "", "hello"}, [], []).` |
-| JavaScript | `fetch("/tmp/out.txt", { method: "POST", body: "hello" }).then(r => console.log(r.ok ? 1 : -1));` |
-| Go | `resp, _ := http.Post("/tmp/out.txt", "text/plain", strings.NewReader("hello")); out := -1; if resp.StatusCode < 300 { out = 1 }` |
-| Clojure | `(http/post "/tmp/out.txt" {:body "hello"})` |
-
-</details>
-
----
-
 ## <a name="error"></a>9. Errors — `:error`
 
 ### `:error`
 
-**Returns `"1"` if there are errors, `"0"` otherwise (result in `results["error"]`).**
+**Returns `"1"` if there are errors, `"0"` otherwise.**
 
 ```true
 :error
@@ -1502,99 +1240,9 @@ ls -la => :console
 
 ---
 
-### `:error:line`
-
-**Returns the last error's line number (result in `results["error:line"]`).**
-
-```true
-:error:line
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `l = str(exception_line)` |
-| Rust | `let l = error_line.to_string();` |
-| Bash | `l=$error_line` |
-| Elixir | `l = Integer.to_string(error_line)` |
-| C | `char l[16]; sprintf(l, "%d", error_line);` |
-| Kotlin | `val l = errorLine.toString()` |
-| Haskell | `let l = show errorLine` |
-| Lua | `local l = tostring(error_line)` |
-| Erlang | `L = integer_to_list(ErrorLine).` |
-| JavaScript | `const l = String(errorLine);` |
-| Go | `l := strconv.Itoa(errorLine)` |
-| Clojure | `(def l (str error-line))` |
-
-</details>
-
----
-
-### `:error:message`
-
-**Returns the last error message (result in `results["error:message"]`).**
-
-```true
-:error:message
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `m = f"{code}, {1 if active else 0}, {details}"` |
-| Rust | `let m = format!("{}, {}, {}", code, if active { 1 } else { 0 }, details);` |
-| Bash | `m="$code, $([ "$active" = "1" ] && echo 1 \|\| echo 0), $details"` |
-| Elixir | `m = "#{code}, #{if active, do: 1, else: 0}, #{details}"` |
-| C | `char m[1024]; sprintf(m, "%s, %d, %s", code, active ? 1 : 0, details);` |
-| Kotlin | `val m = "$code, ${if (active) 1 else 0}, $details"` |
-| Haskell | `let m = code ++ ", " ++ (if active then "1" else "0") ++ ", " ++ details` |
-| Lua | `local m = code .. ", " .. (active and "1" or "0") .. ", " .. details` |
-| Erlang | `M = io_lib:format("~s, ~p, ~s", [Code, case Active of true -> 1; false -> 0 end, Details]).` |
-| JavaScript | `const m = `${code}, ${active ? 1 : 0}, ${details}`;` |
-| Go | `m := fmt.Sprintf("%s, %d, %s", code, map[bool]int{true: 1, false: 0}[active], details)` |
-| Clojure | `(def m (str code ", " (if active 1 0) ", " details))` |
-
-</details>
-
----
-
-### `:error:lines` / `:error:messages`
-
-**All error lines / all error messages.**
-
-```true
-:error:lines
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `ls = ",".join(str(l) for l in error_lines)` |
-| Rust | `let ls = error_lines.iter().map(\|l\| l.to_string()).collect::<Vec<_>>().join(",");` |
-| Bash | `ls=$(IFS=,; echo "${error_lines[*]}")` |
-| Elixir | `ls = Enum.join(error_lines, ",")` |
-| C | `/* manual assembly */` |
-| Kotlin | `val ls = errorLines.joinToString(",")` |
-| Haskell | `let ls = intercalate "," (map show errorLines)` |
-| Lua | `local ls = table.concat(error_lines, ",")` |
-| Erlang | `Ls = string:join([integer_to_list(L) \|\| L <- ErrorLines], ",").` |
-| JavaScript | `const ls = errorLines.join(",");` |
-| Go | `ls := strings.Join(toStrings(errorLines), ",")` |
-| Clojure | `(def ls (clojure.string/join "," error-lines))` |
-
-</details>
-
----
-
 ### `message => :error`
 
-**Sets an error with the given message (assert-like).**
+**Sets an error. Does not pause by default.**
 
 ```true
 !(a == b) ? "a != b" => :error
@@ -1624,7 +1272,7 @@ ls -la => :console
 
 ### `0 => :error:resolve`
 
-**Marks all errors as resolved (green in editor and log).**
+**Marks all errors as resolved.**
 
 ```true
 0 => :error:resolve
@@ -1650,11 +1298,65 @@ ls -la => :console
 
 </details>
 
-## <a name="agent"></a>10. Agents — `:agent`
+---
+
+## <a name="assert"></a>10. Assert — `:assert`
+
+### `:assert`
+
+**Asserts a condition (success — green, failure — red). Does not pause by default.**
+
+```true
+a == b, "a must equal b" => :assert \ py: `assert a == b, "a must equal b"` | elixir: `if a != b, do: raise "a must equal b"`
+```
+
+<details>
+<summary>Other languages</summary>
+
+| Name | Code |
+|---|---|
+| Python | `assert a == b, "a must equal b"` |
+| Rust | `assert_eq!(a, b, "a must equal b");` |
+| Bash | `[ "$a" = "$b" ] \|\| { echo "a must equal b" >&2; exit 1; }` |
+| Elixir | `if a != b, do: raise "a must equal b"` |
+| C | `if (a != b) { fprintf(stderr, "a must equal b\n"); exit(1); }` |
+| Kotlin | `check(a == b) { "a must equal b" }` |
+| Haskell | `if a /= b then error "a must equal b" else ()` |
+| Lua | `assert(a == b, "a must equal b")` |
+| Erlang | `case A == B of true -> ok; false -> erlang:error("a must equal b") end.` |
+| JavaScript | `console.assert(a === b, "a must equal b");` |
+| Go | `if a != b { panic("a must equal b") }` |
+| Clojure | `(assert (= a b) "a must equal b")` |
+
+</details>
+
+---
+
+## <a name="pause"></a>11. Pause / Resume — `:pauseAll` / `:resumeAll`
+
+### `:pauseAll`
+
+**Pauses all agents.**
+
+```true
+:pauseAll
+```
+
+### `:resumeAll`
+
+**Resumes all agents.**
+
+```true
+:resumeAll
+```
+
+---
+
+## <a name="agent"></a>12. Agents — `:agent`
 
 ### `:agent:<name>:status`
 
-**Gets a named agent's status (result in `results[dst]`).**
+**Gets a named agent's status.**
 
 ```true
 :agent:main:status = dst \ py: `dst = agents["main"].status` | elixir: `dst = Agent.get(:"main", & &1.status)`
@@ -1682,39 +1384,9 @@ ls -la => :console
 
 ---
 
-### `:agent:<name>:waiter`
-
-**Checks if the agent is a waiter (result in `results[dst]`).**
-
-```true
-:agent:main:waiter = dst \ py: `dst = "1" if main_waiter else "0"` | elixir: `dst = if main_waiter, do: "1", else: "0"`
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `dst = "1" if main_waiter else "0"` |
-| Rust | `let dst = if main_waiter { "1" } else { "0" };` |
-| Bash | `dst=$([ "$main_waiter" = "1" ] && echo 1 \|\| echo 0)` |
-| Elixir | `dst = if main_waiter, do: "1", else: "0"` |
-| C | `const char *dst = main_waiter ? "1" : "0";` |
-| Kotlin | `val dst = if (mainWaiter) "1" else "0"` |
-| Haskell | `let dst = if mainWaiter then "1" else "0"` |
-| Lua | `local dst = main_waiter and "1" or "0"` |
-| Erlang | `Dst = case MainWaiter of true -> "1"; false -> "0" end.` |
-| JavaScript | `const dst = mainWaiter ? "1" : "0";` |
-| Go | `dst := "0"; if mainWaiter { dst = "1" }` |
-| Clojure | `(def dst (if @main-waiter "1" "0"))` |
-
-</details>
-
----
-
 ### `:agent:status`
 
-**Gets all agents' statuses (result in `results[dst]`).**
+**Gets all agents' statuses.**
 
 ```true
 :agent:status = dst
@@ -1745,7 +1417,7 @@ ls -la => :console
 
 ### `:agent:wait`
 
-**Pauses the agent for N ms (result: `PAUSED`, resumes after N ms).**
+**Pauses the agent for N ms.**
 
 ```true
 100 => :agent:wait
@@ -1773,69 +1445,7 @@ ls -la => :console
 
 ---
 
-### `:agent:wait:timeout`
-
-**Pauses the agent for N ms, but no longer than T ms (result: `PAUSED`, auto-resume with `timeout` error if exceeded).**
-
-```true
-100, 5000 => :agent:wait:timeout
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `time.sleep(min(0.1, 5.0))` |
-| Rust | `tokio::time::timeout(Duration::from_millis(5000), tokio::time::sleep(Duration::from_millis(100))).await;` |
-| Bash | `sleep 0.1 & wait -n` |
-| Elixir | `Process.sleep(min(100, 5000))` |
-| C | `/* via select/poll */` |
-| Kotlin | `withTimeout(5000) { delay(100) }` |
-| Haskell | `timeout 5000000 (threadDelay 100000)` |
-| Lua | `-- via socket` |
-| Erlang | `receive after min(100, 5000) -> ok end.` |
-| JavaScript | `await new Promise((r, j) => { const t = setTimeout(r, 100); setTimeout(() => { clearTimeout(t); j("timeout"); }, 5000); });` |
-| Go | `select { case <-time.After(100 * time.Millisecond): case <-time.After(5000 * time.Millisecond): }` |
-| Clojure | `(deref (future (Thread/sleep 100)) 5000 nil)` |
-
-</details>
-
----
-
-### `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` / `^ :reset`
-
-**Control commands (result: agent status change).**
-
-```true
-^ :stop
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `raise SystemExit` |
-| Rust | `return;` |
-| Bash | `exit 0` |
-| Elixir | `exit(:normal)` |
-| C | `pthread_exit(NULL);` |
-| Kotlin | `Thread.currentThread().interrupt()` |
-| Haskell | `throwTo self ThreadKilled` |
-| Lua | `coroutine.close(co)` |
-| Erlang | `exit(self(), normal).` |
-| JavaScript | `return;` |
-| Go | `return` |
-| Clojure | `(System/exit 0)` |
-
-</details>
-
----
-
-## <a name="simple"></a>11. Interpreter — `:simple`
-
-**`:simple:*` — 21 interpreter functions, async. Result: `results["simple"] = "1"`. Destructive actions are logged. Path: absolute or relative (from `projectDir`, fallback `baseDir`).**
+## <a name="simple"></a>13. Interpreter — `:simple`
 
 ### `:simple:open`
 
@@ -1867,489 +1477,182 @@ ls -la => :console
 
 ---
 
-### `:simple:save`
+### `:simple:click`
 
-**Saves the current file.**
+**Clicks a UI element.**
 
 ```true
-=> :simple:save
+button:startAll => :simple:click
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `open(current_path, "w").write(current_content)` |
-| Rust | `std::fs::write(current_path, current_content)?;` |
-| Bash | `printf '%s' "$current_content" > "$current_path"` |
-| Elixir | `File.write!(current_path, current_content)` |
-| C | `FILE *f = fopen(current_path, "w"); fputs(current_content, f); fclose(f);` |
-| Kotlin | `File(currentPath).writeText(currentContent)` |
-| Haskell | `writeFile currentPath currentContent` |
-| Lua | `local f = io.open(current_path, "w"); f:write(current_content); f:close()` |
-| Erlang | `file:write_file(CurrentPath, CurrentContent).` |
-| JavaScript | `writeFileSync(currentPath, currentContent);` |
-| Go | `os.WriteFile(currentPath, []byte(currentContent), 0644)` |
-| Clojure | `(spit current-path current-content)` |
-
-</details>
+**Targets:** `button:*`, `tab:*`, `agent:*`, `menu:*`, `file:*`.
 
 ---
 
-### `:simple:saveAs`
+### `:simple:clickAt`
 
-**Saves the current file as a new path.**
+**Clicks at absolute screen coordinates (AWT Robot). Dangerous, runtime only, no headless.**
 
 ```true
-/tmp/new.cycle => :simple:saveAs
+100, 200 => :simple:clickAt
 ```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `open("/tmp/new.cycle", "w").write(current_content)` |
-| Rust | `std::fs::write("/tmp/new.cycle", current_content)?;` |
-| Bash | `printf '%s' "$current_content" > /tmp/new.cycle` |
-| Elixir | `File.write!("/tmp/new.cycle", current_content)` |
-| C | `FILE *f = fopen("/tmp/new.cycle", "w"); fputs(current_content, f); fclose(f);` |
-| Kotlin | `File("/tmp/new.cycle").writeText(currentContent)` |
-| Haskell | `writeFile "/tmp/new.cycle" currentContent` |
-| Lua | `local f = io.open("/tmp/new.cycle", "w"); f:write(current_content); f:close()` |
-| Erlang | `file:write_file("/tmp/new.cycle", CurrentContent).` |
-| JavaScript | `writeFileSync("/tmp/new.cycle", currentContent);` |
-| Go | `os.WriteFile("/tmp/new.cycle", []byte(currentContent), 0644)` |
-| Clojure | `(spit "/tmp/new.cycle" current-content)` |
-
-</details>
 
 ---
 
-### `:simple:newCycle`
+### `:simple:type`
 
-**Creates a new cycle tab.**
+**Types text into a UI element, character by character (like a human).**
 
 ```true
-=> :simple:newCycle
+hello, editor:current => :simple:type
+hello, editor:current, 100 => :simple:type
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `current_tab = create_tab("new.cycle", default_code)` |
-| Rust | `let tab = create_tab("new.cycle", &default_code);` |
-| Bash | `touch new.cycle` |
-| Elixir | `GenServer.cast(:ui, {:new_tab, "new.cycle"})` |
-| C | `/* create new tab */` |
-| Kotlin | `tabs.create("new.cycle", defaultCode)` |
-| Haskell | `createTab "new.cycle" defaultCode` |
-| Lua | `ui.new_tab("new.cycle")` |
-| Erlang | `ui ! {new_tab, "new.cycle"}.` |
-| JavaScript | `createTab("new.cycle", defaultCode);` |
-| Go | `ui.CreateTab("new.cycle", defaultCode)` |
-| Clojure | `(ui/create-tab "new.cycle" default-code)` |
-
-</details>
+- `delay` — ms between characters, default 30. `0` — no delay, but still character by character.
 
 ---
 
-### `:simple:newAgent`
+### `:simple:openTerminal`
 
-**Creates a new agent tab.**
+**Opens a real OS terminal.**
 
 ```true
-=> :simple:newAgent
+Console => :simple:openTerminal
 ```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `current_tab = create_tab("new.agent", default_code)` |
-| Rust | `let tab = create_tab("new.agent", &default_code);` |
-| Bash | `touch new.agent` |
-| Elixir | `GenServer.cast(:ui, {:new_tab, "new.agent"})` |
-| C | `/* create new agent tab */` |
-| Kotlin | `tabs.create("new.agent", defaultCode)` |
-| Haskell | `createTab "new.agent" defaultCode` |
-| Lua | `ui.new_tab("new.agent")` |
-| Erlang | `ui ! {new_tab, "new.agent"}.` |
-| JavaScript | `createTab("new.agent", defaultCode);` |
-| Go | `ui.CreateTab("new.agent", defaultCode)` |
-| Clojure | `(ui/create-tab "new.agent" default-code)` |
-
-</details>
 
 ---
 
-### `:simple:openFolder`
+### `:simple:closeTerminal`
 
-**Opens a folder as a project.**
+**Closes a terminal.**
 
 ```true
-/tmp/folder => :simple:openFolder
+Console => :simple:closeTerminal
 ```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `chdir("/tmp/folder"); load_files()` |
-| Rust | `std::env::set_current_dir("/tmp/folder")?; load_files()?;` |
-| Bash | `cd /tmp/folder` |
-| Elixir | `File.cd!("/tmp/folder")` |
-| C | `chdir("/tmp/folder");` |
-| Kotlin | `File("/tmp/folder").listFiles()` |
-| Haskell | `setCurrentDirectory "/tmp/folder"` |
-| Lua | `-- no direct chdir` |
-| Erlang | `file:set_cwd("/tmp/folder").` |
-| JavaScript | `readdirSync("/tmp/folder");` |
-| Go | `os.Chdir("/tmp/folder")` |
-| Clojure | `(clojure.java.shell/sh "cd" "/tmp/folder")` |
-
-</details>
 
 ---
 
-### `:simple:rename`
+### `:simple:sendTerminal`
 
-**Renames the current file.**
+**Sends a command to an open terminal.**
 
 ```true
-new-name.cycle => :simple:rename
+ls -la, Console => :simple:sendTerminal
 ```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `rename(current_path, "new-name.cycle")` |
-| Rust | `std::fs::rename(current_path, "new-name.cycle")?;` |
-| Bash | `mv "$current_path" new-name.cycle` |
-| Elixir | `File.rename!(current_path, "new-name.cycle")` |
-| C | `rename(current_path, "new-name.cycle");` |
-| Kotlin | `File(currentPath).renameTo(File("new-name.cycle"))` |
-| Haskell | `renamePath currentPath "new-name.cycle"` |
-| Lua | `os.rename(current_path, "new-name.cycle")` |
-| Erlang | `file:rename(CurrentPath, "new-name.cycle").` |
-| JavaScript | `renameSync(currentPath, "new-name.cycle");` |
-| Go | `os.Rename(currentPath, "new-name.cycle")` |
-| Clojure | `(clojure.java.io/rename-file current-path "new-name.cycle")` |
-
-</details>
 
 ---
 
-### `:simple:delete`
+### `:simple:typeTerminal`
 
-**Deletes the current file (logged).**
+**Types text into an open terminal, character by character (to stdin).**
 
 ```true
-=> :simple:delete
+echo hello, Console => :simple:typeTerminal
+echo hello, Console, 100 => :simple:typeTerminal
 ```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `remove(current_path)` |
-| Rust | `std::fs::remove_file(current_path)?;` |
-| Bash | `rm -f "$current_path"` |
-| Elixir | `File.rm!(current_path)` |
-| C | `remove(current_path);` |
-| Kotlin | `File(currentPath).delete()` |
-| Haskell | `removeFile currentPath` |
-| Lua | `os.remove(current_path)` |
-| Erlang | `file:delete(CurrentPath).` |
-| JavaScript | `unlinkSync(currentPath);` |
-| Go | `os.Remove(currentPath)` |
-| Clojure | `(clojure.java.io/delete-file current-path)` |
-
-</details>
 
 ---
 
-### `:simple:reset`
+### `:simple:search`
 
-**Resets the current file.**
+**Sets query and runs search.**
 
 ```true
-=> :simple:reset
+hello => :simple:search
 ```
 
-<details>
-<summary>Other languages</summary>
+### `:simple:search:query`
 
-| Name | Code |
-|---|---|
-| Python | `file.code = start_code; agent.current_step = 1` |
-| Rust | `tab.code = start_code.clone(); agent.current_step = 1;` |
-| Bash | `# reload from start` |
-| Elixir | `file = %{file \| code: start_code}; agent = %{agent \| step: 1}` |
-| C | `strcpy(tab.code, start_code); agent.current_step = 1;` |
-| Kotlin | `tab.code = startCode; agent.currentStep = 1` |
-| Haskell | `let tab' = tab { code = startCode, currentStep = 1 }` |
-| Lua | `file.code = start_code; agent.current_step = 1` |
-| Erlang | `Tab2 = Tab#tab{code = StartCode, step = 1}.` |
-| JavaScript | `file.code = startCode; agent.currentStep = 1;` |
-| Go | `tab.Code = startCode; agent.CurrentStep = 1` |
-| Clojure | `(def tab' (assoc tab :code start-code :current-step 1))` |
+**Current query.**
 
-</details>
+```true
+:simple:search:query
+```
+
+### `:simple:search:matches`
+
+**Lines with matches.**
+
+```true
+:simple:search:matches
+```
+
+### `:simple:search:current`
+
+**Current match (1-based).**
+
+```true
+:simple:search:current
+```
+
+### `:simple:search:count`
+
+**Number of matches.**
+
+```true
+:simple:search:count
+```
+
+### `:simple:search:next` / `:simple:search:prev`
+
+**Next / previous match.**
+
+```true
+:simple:search:next
+:simple:search:prev
+```
+
+### `:simple:search:clear`
+
+**Clear search.**
+
+```true
+:simple:search:clear
+```
 
 ---
 
-### `:simple:close`
-
-**Closes the current tab (logged).**
-
-```true
-=> :simple:close
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `close_tab(current_path)` |
-| Rust | `close_tab(current_path);` |
-| Bash | `# close tab` |
-| Elixir | `GenServer.cast(:ui, {:close_tab, current_path})` |
-| C | `/* close tab */` |
-| Kotlin | `tabs.close(current)` |
-| Haskell | `closeTab currentPath` |
-| Lua | `ui.close_tab(current_path)` |
-| Erlang | `ui ! {close_tab, CurrentPath}.` |
-| JavaScript | `closeTab(currentPath);` |
-| Go | `ui.CloseTab(currentPath)` |
-| Clojure | `(ui/close-tab current-path)` |
-
-</details>
+**Result:** `:simple` = `"1"` (accepted, async). To use — `:simple` (substitution) or `:simple = name` (naming). **Never** `name = :simple` — system name on the right is forbidden.
 
 ---
 
-### `:simple:moveUp` / `:simple:moveDown`
-
-**Move the file up or down in `fileOrder`.**
-
-```true
-=> :simple:moveUp
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `file_order[idx], file_order[idx - 1] = file_order[idx - 1], file_order[idx]` |
-| Rust | `file_order.swap(idx, idx - 1);` |
-| Bash | `# swap array elements` |
-| Elixir | `{first, [a, b \| rest]} = Enum.split(file_order, idx - 1); new = first ++ [b, a] ++ rest` |
-| C | `char *tmp = file_order[idx]; file_order[idx] = file_order[idx - 1]; file_order[idx - 1] = tmp;` |
-| Kotlin | `val tmp = fileOrder[idx]; fileOrder[idx] = fileOrder[idx - 1]; fileOrder[idx - 1] = tmp` |
-| Haskell | `let (a, b:rest) = splitAt (idx - 1) fileOrder; let new = a ++ [rest !! 0, b] ++ drop 1 rest` |
-| Lua | `file_order[idx], file_order[idx - 1] = file_order[idx - 1], file_order[idx]` |
-| Erlang | `% manual list manipulation` |
-| JavaScript | `[fileOrder[idx], fileOrder[idx - 1]] = [fileOrder[idx - 1], fileOrder[idx]];` |
-| Go | `fileOrder[idx], fileOrder[idx-1] = fileOrder[idx-1], fileOrder[idx]` |
-| Clojure | `(def new (assoc file-order idx (file-order (dec idx)) (dec idx) (file-order idx)))` |
-
-</details>
-
----
-
-### `:simple:startAll` / `:simple:pauseAll` / `:simple:stopAll` / `:simple:stepAll` / `:simple:stepBackAll`
-
-**Control all agents.**
-
-```true
-=> :simple:startAll
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `for a in agents: a.start()` |
-| Rust | `for a in agents.iter() { a.start(); }` |
-| Bash | `for pid in "${agent_pids[@]}"; do kill -CONT "$pid"; done` |
-| Elixir | `Enum.each(agents, &Agent.cast(&1, :start))` |
-| C | `for (int i = 0; i < n; i++) agents[i].start();` |
-| Kotlin | `agents.forEach { it.start() }` |
-| Haskell | `mapM_ startAgent agents` |
-| Lua | `for _, a in ipairs(agents) do a:start() end` |
-| Erlang | `[gen_server:cast(A, start) \|\| A <- Agents].` |
-| JavaScript | `agents.forEach(a => a.start());` |
-| Go | `for _, a := range agents { a.Start() }` |
-| Clojure | `(doseq [a agents] (.start a))` |
-
-</details>
-
----
-
-### `:simple:settings` / `:simple:about` / `:simple:samples` / `:simple:activeTab`
-
-**Open dialogs or switch tab.**
-
-```true
-=> :simple:settings
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `show_settings_dialog()` |
-| Rust | `ui.show_dialog("Settings");` |
-| Bash | `# not idiomatic` |
-| Elixir | `GenServer.cast(:ui, {:show_settings})` |
-| C | `show_dialog("Settings");` |
-| Kotlin | `showDialog("Settings")` |
-| Haskell | `uiShowDialog "Settings"` |
-| Lua | `ui.show_dialog("Settings")` |
-| Erlang | `ui ! {show_dialog, "Settings"}.` |
-| JavaScript | `openSettingsDialog();` |
-| Go | `ui.ShowDialog("Settings")` |
-| Clojure | `(ui/show-dialog "Settings")` |
-
-</details>
-
----
-
-## <a name="settings"></a>12. Settings
+## <a name="settings"></a>14. Settings
 
 ### `:historyLimit`
 
-**Get or set the history limit (result in `results["historyLimit"]`).**
+**Get or set the history limit (default 100).**
 
 ```true
 :historyLimit
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `dst = str(history_limit)` |
-| Rust | `let dst = history_limit.to_string();` |
-| Bash | `dst=$history_limit` |
-| Elixir | `dst = Integer.to_string(history_limit)` |
-| C | `char dst[16]; sprintf(dst, "%d", history_limit);` |
-| Kotlin | `val dst = historyLimit.toString()` |
-| Haskell | `let dst = show historyLimit` |
-| Lua | `local dst = tostring(history_limit)` |
-| Erlang | `Dst = integer_to_list(HistoryLimit).` |
-| JavaScript | `const dst = String(historyLimit);` |
-| Go | `dst := strconv.Itoa(historyLimit)` |
-| Clojure | `(def dst (str @history-limit))` |
-
-</details>
-
----
-
 ### `:logLimit`
 
-**Get or set the log limit (result in `results["logLimit"]`).**
+**Get or set the log limit (default 1000).**
 
 ```true
 :logLimit
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `dst = str(log_limit)` |
-| Rust | `let dst = log_limit.to_string();` |
-| Bash | `dst=$log_limit` |
-| Elixir | `dst = Integer.to_string(log_limit)` |
-| C | `char dst[16]; sprintf(dst, "%d", log_limit);` |
-| Kotlin | `val dst = logLimit.toString()` |
-| Haskell | `let dst = show logLimit` |
-| Lua | `local dst = tostring(log_limit)` |
-| Erlang | `Dst = integer_to_list(LogLimit).` |
-| JavaScript | `const dst = String(logLimit);` |
-| Go | `dst := strconv.Itoa(logLimit)` |
-| Clojure | `(def dst (str @log-limit))` |
-
-</details>
-
----
-
 ### `:strictMode`
 
-**Get or set strict mode (result in `results["strictMode"]`).**
+**Get or set strict mode.**
 
 ```true
 :strictMode
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `dst = "1" if strict_mode else "0"` |
-| Rust | `let dst = if strict_mode { "1" } else { "0" };` |
-| Bash | `dst=$strict_mode` |
-| Elixir | `dst = if strict_mode, do: "1", else: "0"` |
-| C | `const char *dst = strict_mode ? "1" : "0";` |
-| Kotlin | `val dst = if (strictMode) "1" else "0"` |
-| Haskell | `let dst = if strictMode then "1" else "0"` |
-| Lua | `local dst = strict_mode and "1" or "0"` |
-| Erlang | `Dst = case StrictMode of true -> "1"; false -> "0" end.` |
-| JavaScript | `const dst = strictMode ? "1" : "0";` |
-| Go | `dst := "0"; if strictMode { dst = "1" }` |
-| Clojure | `(def dst (if @strict-mode "1" "0"))` |
-
-</details>
-
----
-
 ### `:autoSync`
 
-**Get or set auto-update of declarations (result in `results["autoSync"]`).**
+**Get or set auto-update of declarations.**
 
 ```true
 :autoSync
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `dst = "1" if auto_sync else "0"` |
-| Rust | `let dst = if auto_sync { "1" } else { "0" };` |
-| Bash | `dst=$auto_sync` |
-| Elixir | `dst = if auto_sync, do: "1", else: "0"` |
-| C | `const char *dst = auto_sync ? "1" : "0";` |
-| Kotlin | `val dst = if (autoSync) "1" else "0"` |
-| Haskell | `let dst = if autoSync then "1" else "0"` |
-| Lua | `local dst = auto_sync and "1" or "0"` |
-| Erlang | `Dst = case AutoSync of true -> "1"; false -> "0" end.` |
-| JavaScript | `const dst = autoSync ? "1" : "0";` |
-| Go | `dst := "0"; if autoSync { dst = "1" }` |
-| Clojure | `(def dst (if @auto-sync "1" "0"))` |
-
-</details>
-
 ---
 
-## <a name="meta"></a>13. Meta
+## <a name="meta"></a>15. Meta
 
 ### `:run`
 
@@ -2359,27 +1662,7 @@ new-name.cycle => :simple:rename
 :run
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `exec(current_line)` |
-| Rust | `// no direct eval` |
-| Bash | `eval "$current_line"` |
-| Elixir | `Code.eval_string(current_line)` |
-| C | `/* no direct eval */` |
-| Kotlin | `// no direct eval` |
-| Haskell | `-- via hint` |
-| Lua | `load(current_line)()` |
-| Erlang | `erl_eval:exprs(CurrentLine, []).` |
-| JavaScript | `eval(currentLine);` |
-| Go | `// no direct eval` |
-| Clojure | `(eval (read-string current-line))` |
-
-</details>
-
----
+**Container:** `:run` — empty string (if not set).
 
 ### `:log`
 
@@ -2389,31 +1672,11 @@ new-name.cycle => :simple:rename
 :log
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `print(current_line)` |
-| Rust | `println!("{}", current_line);` |
-| Bash | `echo "$current_line"` |
-| Elixir | `IO.puts(current_line)` |
-| C | `printf("%s\n", current_line);` |
-| Kotlin | `println(currentLine)` |
-| Haskell | `putStrLn currentLine` |
-| Lua | `print(current_line)` |
-| Erlang | `io:format("~s~n", [CurrentLine]).` |
-| JavaScript | `console.log(currentLine);` |
-| Go | `fmt.Println(currentLine)` |
-| Clojure | `(println current-line)` |
-
-</details>
-
----
+**Container:** `:log` — empty string.
 
 ### `:message`
 
-**Writes a message to the log with type `message` (result in `results["message"]`).**
+**Writes a message to the log with type `message`.**
 
 ```true
 hello => :message \ py: `log_message("hello")` | elixir: `Logger.info("hello")`
@@ -2443,67 +1706,27 @@ hello => :message \ py: `log_message("hello")` | elixir: `Logger.info("hello")`
 
 ### `:result`
 
-**Stores the value as the function result (result in `results["result"]`).**
+**Stores the value as the function result.**
 
 ```true
 42 => :result
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `result = 42` |
-| Rust | `let result = 42;` |
-| Bash | `result=42` |
-| Elixir | `result = 42` |
-| C | `int result = 42;` |
-| Kotlin | `val result = 42` |
-| Haskell | `let result = 42` |
-| Lua | `local result = 42` |
-| Erlang | `Result = 42.` |
-| JavaScript | `result = 42;` |
-| Go | `result := 42` |
-| Clojure | `(def result 42)` |
-
-</details>
-
----
+**Container:** `:result` — the value.
 
 ### `:parameters`
 
-**Returns the entry argument of a file-function (result in `results["parameters"]`).**
+**Returns the entry argument of a file-function.**
 
 ```true
 :parameters
 ```
 
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `p = sys.argv[1]` |
-| Rust | `let p = std::env::args().nth(1);` |
-| Bash | `p=$1` |
-| Elixir | `p = System.argv() \|> Enum.at(0)` |
-| C | `const char *p = argc > 1 ? argv[1] : "";` |
-| Kotlin | `val p = args.getOrNull(0)` |
-| Haskell | `args <- getArgs; let p = if null args then "" else head args` |
-| Lua | `local p = arg[1] or ""` |
-| Erlang | `P = hd(init:get_plain_arguments()).` |
-| JavaScript | `const p = process.argv[2];` |
-| Go | `p := ""; if len(os.Args) > 1 { p = os.Args[1] }` |
-| Clojure | `(def p (first *command-line-args*))` |
-
-</details>
-
----
+**Container:** `:parameters` — the value.
 
 ### `:range`
 
-**Generates a range of numbers (result in `results["range"]`).**
+**Generates a range of numbers.**
 
 ```true
 1, 5 => :range \ py: `out = ",".join(str(n) for n in range(1, 6))` | elixir: `out = Enum.join(1..5, ",")`
@@ -2565,7 +1788,7 @@ action, 5 => :repeat
 
 ### `:activeTab`
 
-**Switches the active tab (1-based) and optionally the step.**
+**Switches the active tab (1-based).**
 
 ```true
 1 => :activeTab
@@ -2590,34 +1813,3 @@ action, 5 => :repeat
 | Clojure | `(ui/select-tab 0)` |
 
 </details>
-
----
-
-### `:size` / `:s`
-
-**Returns size by axis (result in `results["size"]`).**
-
-```true
-hello => :s \ py: `out = len("hello")` | rust: `let out = "hello".len();`
-```
-
-<details>
-<summary>Other languages</summary>
-
-| Name | Code |
-|---|---|
-| Python | `out = len("hello")` |
-| Rust | `let out = "hello".len();` |
-| Bash | `out=${#s}` |
-| Elixir | `out = String.length("hello")` |
-| C | `int out = strlen("hello");` |
-| Kotlin | `val out = "hello".length` |
-| Haskell | `let out = length "hello"` |
-| Lua | `local out = #"hello"` |
-| Erlang | `Out = length("hello").` |
-| JavaScript | `const out = "hello".length;` |
-| Go | `out := len("hello")` |
-| Clojure | `(def out (count "hello"))` |
-
-</details>
-

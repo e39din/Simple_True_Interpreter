@@ -46,6 +46,7 @@ class Interpreter(
     var funcExists: ((String, String) -> Boolean)? = null,
     var agentCaller: ((callerAgentId: Int, name: String, action: AgentAction, arg: String?) -> Unit)? = null,
     var simpleCaller: ((action: String, arg: String?) -> Unit)? = null,
+    var snackbarCaller: ((text: String, kind: String) -> Unit)? = null,
     var callerAgentId: Int = -1
 ) {
     var currentStep: Int = 1; private set
@@ -153,7 +154,7 @@ class Interpreter(
                 val m = forbidden.find(t)
                 if (m != null) {
                     val name = m.groupValues[1]
-                    if (name in SYSTEM_NAMES && tabExists?.invoke(name) != true) {
+                    if (name in STRICT_SYSTEM_NAMES && tabExists?.invoke(name) != true) {
                         errors += Error(line.number, "Strict Mode: ':$name' is forbidden")
                         continue
                     }
@@ -272,7 +273,7 @@ class Interpreter(
             results["error:lines"] = errorLines.joinToString(",")
             results["error:messages"] = errorMessages.joinToString("\n")
             setStatus(Status.PAUSED)
-            return StepResult(currentStep, emptyMap(), emptyList(), op.log, Status.PAUSED, null, op.errorLine)
+            return StepResult(currentStep, emptyMap(), emptyList(), op.log, Status.PAUSED, op.command, op.errorLine)
         }
         if (op.newStatus != null) setStatus(op.newStatus)
         if (op.step != null) {
@@ -344,9 +345,16 @@ class Interpreter(
         FILE_SAVE_RE.matchEntire(op)?.let { return runFileSave(it, prefix) }
         FILE_PATH_RE.matchEntire(op)?.let { return runFilePath(it, prefix) }
 
+        PAUSE_ALL_RE.matchEntire(op)?.let { return runPauseAll(prefix) }
+        PAUSE_ALL_BARE_RE.matchEntire(op)?.let { return runPauseAll(prefix) }
+        RESUME_ALL_RE.matchEntire(op)?.let { return runResumeAll(prefix) }
+        RESUME_ALL_BARE_RE.matchEntire(op)?.let { return runResumeAll(prefix) }
+
         ERROR_GET_RE.matchEntire(op)?.let { return runErrorGet(it, line, prefix) }
         ERROR_RESOLVED_RE.matchEntire(op)?.let { return runErrorResolved(it, prefix) }
         ERROR_SET_RE.matchEntire(op)?.let { return runErrorSet(it, line, prefix) }
+        ASSERT_RE.matchEntire(op)?.let { return runAssert(it, line, prefix) }
+        ASSERT_NO_MSG_RE.matchEntire(op)?.let { return runAssertNoMsg(it, line, prefix) }
 
         SIMPLE_RE.matchEntire(op)?.let { return runSimple(it, line, prefix) }
 
@@ -436,7 +444,6 @@ class Interpreter(
                 return OpResult(log = "Local call $src:$fn('$data') → ${result.take(40)}")
             }
         }
-        TAB_CALL_CHAIN_RE.matchEntire(op)?.let { return runTabCallChain(it, line, prefix) }
         TAB_CALL_ASYNC_RE.matchEntire(op)?.let { m ->
             val name = m.groupValues[2].trim().removeSuffix("!")
             if (tabExists?.invoke(name) == true) {
@@ -457,10 +464,14 @@ class Interpreter(
         MOVE_RE.matchEntire(op)?.let { return runMove(it, line, prefix) }
         COPY_RE.matchEntire(op)?.let { return runCopy(it, line, prefix) }
 
+        NAMING_SYSTEM_RE.matchEntire(op)?.let {
+            return OpResult(log = "${prefix}System name on the right of '=' is forbidden", errorLine = line.number)
+        }
+
         NAMING_EMPTY_RE.matchEntire(op)?.let { m ->
             val name = m.groupValues[1].trim()
             if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = currentStep)
-            if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = currentStep)
+            if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name a container with a system name '$name'", errorLine = currentStep)
             variables[name] = ""
             invalidateSubstituteCache()
             return OpResult(changed = mapOf(name to ""), log = "${prefix}Named empty as '$name'")
@@ -469,6 +480,8 @@ class Interpreter(
         RESULT_NAMING_RE.matchEntire(op)?.let { return runResultNaming(it, line, prefix) }
 
         NAMING_RE.matchEntire(op)?.let { return runNaming(it, line, prefix) }
+
+        COLON_GET_RE.matchEntire(op)?.let { return runColonGet(it, line, prefix) }
 
         if (op.matches(BARE_NAME_RE) && op in variables) {
             return runSubstitution(op, line, lines, prefix)
@@ -495,7 +508,11 @@ class Interpreter(
     }
 
     private fun runRunBare(line: Line, lines: List<Line>, prefix: String): OpResult {
-        if (instruction.isEmpty()) return OpResult(log = "${prefix}:run (no instruction)")
+        if (instruction.isEmpty()) {
+            results["run"] = ""
+            return OpResult(log = "${prefix}:run (no instruction)")
+        }
+        results["run"] = ""
         val result = executeLine(Line(line.number, instruction), lines)
         return OpResult(
             log = "${prefix}:run → '${instruction.take(40)}'",
@@ -511,11 +528,13 @@ class Interpreter(
         val raw = m.groupValues[1].trim()
         val data = if (raw == ":instruction") instruction else substitute(raw)
         log = listOf(LogEntry(data, "log")) + log
+        results["log"] = ""
         return OpResult(log = "${prefix}:log → '${data.take(40)}'")
     }
 
     private fun runLogBare(prefix: String): OpResult {
         log = listOf(LogEntry(instruction, "log")) + log
+        results["log"] = ""
         return OpResult(log = "${prefix}:log → '${instruction.take(40)}'")
     }
 
@@ -627,6 +646,7 @@ class Interpreter(
     private fun runAgentStatus(m: MatchResult, prefix: String): OpResult {
         val dst = m.groupValues[1].trim()
         agentCaller?.invoke(callerAgentId, "*", AgentAction.STATUS, dst)
+        results["agent:status"] = ""
         return OpResult(log = "${prefix}:agent:status → $dst")
     }
 
@@ -634,12 +654,14 @@ class Interpreter(
         val name = substitute(m.groupValues[1].trim())
         val dst = m.groupValues[2].trim()
         agentCaller?.invoke(callerAgentId, name, AgentAction.WAITER, dst)
+        results["agent:$name:waiter"] = ""
         return OpResult(log = "${prefix}:agent:$name:waiter → $dst")
     }
 
     private fun runAgentStatusAll(m: MatchResult, prefix: String): OpResult {
         val dst = m.groupValues[1].trim()
         agentCaller?.invoke(callerAgentId, "*", AgentAction.STATUS, dst)
+        results["agent:status"] = ""
         return OpResult(log = "${prefix}:agent:status → $dst")
     }
 
@@ -738,6 +760,16 @@ class Interpreter(
         return OpResult(log = "${prefix}:file:$name => :path")
     }
 
+    // ---------- :pauseAll / :resumeAll ----------
+
+    private fun runPauseAll(prefix: String): OpResult {
+        return OpResult(log = "${prefix}:pauseAll", command = "pauseAll")
+    }
+
+    private fun runResumeAll(prefix: String): OpResult {
+        return OpResult(log = "${prefix}:resumeAll", command = "resumeAll")
+    }
+
     // ---------- :error ----------
 
     private fun runErrorGet(m: MatchResult, line: Line, prefix: String): OpResult {
@@ -760,11 +792,11 @@ class Interpreter(
         results["error:message"] = "custom, 1, $msg"
         results["error:lines"] = errorLines.joinToString(",")
         results["error:messages"] = errorMessages.joinToString("\n")
-        log = listOf(LogEntry("Error: $msg", "error", line.number, false)) + log
-        setStatus(Status.PAUSED)
+        log = listOf(LogEntry(msg, "error", line.number, false)) + log
         return OpResult(
             log = "${prefix}:error → '$msg'",
-            newStatus = Status.PAUSED,
+            newStatus = null,
+            command = null,
             errorLine = line.number
         )
     }
@@ -787,6 +819,67 @@ class Interpreter(
         return OpResult(log = "${prefix}:error:resolve = $value")
     }
 
+    // ---------- :assert ----------
+
+    private fun runAssert(m: MatchResult, line: Line, prefix: String): OpResult {
+        val cond = substitute(m.groupValues[1].trim())
+        val msg = substitute(m.groupValues[2].trim())
+        val ok = try { evalCondition(cond) } catch (_: Exception) { false }
+        results["assert"] = if (ok) "1" else "0"
+        val entry = LogEntry(
+            if (ok) "✓ $msg" else "✗ $msg ($cond)",
+            "assert",
+            line.number,
+            resolved = ok
+        )
+        log = listOf(entry) + log
+        if (ok) return OpResult(log = "${prefix}:assert OK: $msg")
+        errorLines.add(line.number)
+        errorMessages.add(msg)
+        results["error"] = "1"
+        results["error:line"] = line.number.toString()
+        results["error:message"] = "assert, 1, $msg"
+        results["error:lines"] = errorLines.joinToString(",")
+        results["error:messages"] = errorMessages.joinToString("\n")
+        return OpResult(
+            log = "${prefix}:assert FAIL: $msg",
+            newStatus = null,
+            command = null,
+            errorLine = line.number
+        )
+    }
+
+    private fun runAssertNoMsg(m: MatchResult, line: Line, prefix: String): OpResult {
+        val cond = substitute(m.groupValues[1].trim())
+        snackbarCaller?.invoke(
+            ":assert without message — use \"a == b, \\\"msg\\\" => :assert\"",
+            "warning"
+        )
+        val ok = try { evalCondition(cond) } catch (_: Exception) { false }
+        results["assert"] = if (ok) "1" else "0"
+        val entry = LogEntry(
+            if (ok) "✓ $cond" else "✗ $cond",
+            "assert",
+            line.number,
+            resolved = ok
+        )
+        log = listOf(entry) + log
+        if (ok) return OpResult(log = "${prefix}:assert OK: $cond")
+        errorLines.add(line.number)
+        errorMessages.add(cond)
+        results["error"] = "1"
+        results["error:line"] = line.number.toString()
+        results["error:message"] = "assert, 1, $cond"
+        results["error:lines"] = errorLines.joinToString(",")
+        results["error:messages"] = errorMessages.joinToString("\n")
+        return OpResult(
+            log = "${prefix}:assert FAIL: $cond",
+            newStatus = null,
+            command = null,
+            errorLine = line.number
+        )
+    }
+
     // ---------- :simple ----------
 
     private fun runSimple(m: MatchResult, line: Line, prefix: String): OpResult {
@@ -795,6 +888,9 @@ class Interpreter(
         val arg = if (raw.isEmpty()) null else substitute(raw)
         simpleCaller?.invoke(action, arg)
         results["simple"] = "1"
+        if (action.startsWith("search")) {
+            results["simple:search:count"] = results["simple:search:count"] ?: ""
+        }
         invalidateSubstituteCache()
         return OpResult(log = "${prefix}:simple:$action${if (arg != null) " ('$arg')" else ""}")
     }
@@ -1418,6 +1514,7 @@ class Interpreter(
             return OpResult(changed = mapOf(name to updated), log = "${prefix}:math: $expr = $value → $dst")
         }
         if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = line.number)
+        if (dst !in variables) return OpResult(log = "${prefix}'$dst' is not declared", errorLine = line.number)
         variables[dst] = value
         results["math"] = value
         invalidateSubstituteCache()
@@ -1485,10 +1582,11 @@ class Interpreter(
         val hidden = flags.contains("*"); val isConst = flags.contains("@")
         val isAction = rawValue.contains("=>") || rawValue.contains("->") ||
                 rawValue.contains("^") || rawValue.contains("?")
-        val value = if (isAction) rawValue else substituteLeft(rawValue)
+        val cleaned = rawValue.replace("\\ ", "").replace(" \\", "")
+        val value = if (isAction) cleaned else substituteLeft(rawValue)
         if (name.isEmpty()) return OpResult(log = "${prefix}Naming: empty name", errorLine = line.number)
         if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = line.number)
-        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = line.number)
+        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name a container with a system name '$name'", errorLine = line.number)
         val path = parsePath(name)
         if (path != null) {
             val (base, axes) = path
@@ -1515,7 +1613,7 @@ class Interpreter(
         val key = lhs.removePrefix(":")
         if (name.isEmpty()) return OpResult(log = "${prefix}Result naming: empty name", errorLine = line.number)
         if (name == "nothing") return OpResult(log = "${prefix}'nothing' is reserved", errorLine = line.number)
-        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name container '$name': reserved", errorLine = line.number)
+        if (name in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name a container with a system name '$name'", errorLine = line.number)
         val value = results[key] ?: ""
         if (name in constants) return OpResult(log = "${prefix}Cannot overwrite constant '$name'", errorLine = line.number)
         val hidden = flags.contains('*'); val isConst = flags.contains('@')
@@ -1610,6 +1708,7 @@ class Interpreter(
         val joined = log.joinToString("\n") { it.text }
         log = emptyList()
         variables[dst] = joined
+        results["log"] = ""
         invalidateSubstituteCache()
         return OpResult(changed = mapOf(dst to joined), log = "${prefix}Log -> $dst")
     }
@@ -1639,17 +1738,15 @@ class Interpreter(
         return OpResult(changed = mapOf(dst to result), log = "${prefix}Local call $src:$fn('$data') → $dst = '${result.take(40)}'")
     }
 
-    private fun runTabCallChain(m: MatchResult, line: Line, prefix: String): OpResult {
-        val name = m.groupValues[2].trim(); val dst = m.groupValues[3].trim()
-        if (tabExists?.invoke(name) != true) {
-            return OpResult(log = "${prefix}Tab $name not found", errorLine = line.number)
-        }
-        val data = substitute(m.groupValues[1].trim())
-        val result = tabCaller?.invoke(name, data) ?: ""
+    private fun runColonGet(m: MatchResult, line: Line, prefix: String): OpResult {
+        val key = m.groupValues[1].trim()
+        val dst = m.groupValues[2].trim()
         if (dst in constants) return OpResult(log = "${prefix}Cannot write to constant '$dst'", errorLine = line.number)
-        variables[dst] = result
+        if (dst in SYSTEM_NAMES) return OpResult(log = "${prefix}Cannot name a container with a system name '$dst'", errorLine = line.number)
+        val value = results[key] ?: ""
+        variables[dst] = value
         invalidateSubstituteCache()
-        return OpResult(changed = mapOf(dst to result), log = "${prefix}Tab call $name('$data') → $dst = '${result.take(40)}'")
+        return OpResult(changed = mapOf(dst to value), log = "${prefix}:$key → $dst = '${value.take(40)}'")
     }
 
     private fun runSubstitution(name: String, line: Line, lines: List<Line>, prefix: String): OpResult {
@@ -2261,8 +2358,10 @@ class Interpreter(
         private const val LOG_SRC = """log(?::type|:l:(?:first|last|\d+))?"""
         private val NAMING_RE = Regex("""^(.+?)\s*(?<!\\)=\s*($ATOM)\s*([*@]+)?\s*$""")
         private val NAMING_EMPTY_RE = Regex("""^=\s*([A-Za-z_]\w*)\s*$""")
+        private val NAMING_SYSTEM_RE = Regex("""^(.+?)\s*=\s*(:[A-Za-z_]\w*)\s*$""")
         private val MOVE_RE = Regex("""^($ATOM)\s*->\s*($ATOM)\s*$""")
         private val COPY_RE = Regex("""^($ATOM)\s*=>\s*($ATOM)\s*$""")
+        private val COLON_GET_RE = Regex("""^:([A-Za-z_]\w*(?::[A-Za-z_]\w*)*)\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val COMPARE_OPS = listOf("==", "!=", "<=", ">=", "<", ">")
         private val BIN_OPS = setOf("+", "-", "*", "/", "//", "%", "**", "<<", ">>", "&", "|", "^")
         private val FUNCS = setOf("abs", "min", "max", "round", "floor", "ceil", "sqrt", "pow", "popcount", "clz", "ctz")
@@ -2275,9 +2374,10 @@ class Interpreter(
             "result", "parameters", "nothing", "step", "cycle", "speed", "color",
             "error", "log", "message", "size", "s", "math", "data", "json", "file",
             "api", "console", "simple", "agent", "run", "range", "repeat",
-            "activeTab", "path", "source", "test", "return", "assert", "call",
+            "activeTab", "path", "source", "test", "return", "call",
             "filter", "matches", "map", "reduce", "fold", "each"
         )
+        private val STRICT_SYSTEM_NAMES = SYSTEM_NAMES - setOf("result", "parameters", "return", "test", "source", "path", "activeTab", "s", "size") + setOf("assert", "pauseAll", "resumeAll")
         private val RUN_FN_RE = Regex("""^(.+?)\s*=>\s*:run\s*$""")
         private val RUN_BARE_RE = Regex("""^:run\s*$""")
         private val MATH_CHAIN_RE = Regex("""^(.+?)\s*=>\s*:math\s*=>\s*($ATOM)\s*$""")
@@ -2318,17 +2418,22 @@ class Interpreter(
         private val SAVE_ACTIVE_RE = Regex("""^=>\s*:save\s*$""")
         private val FILE_SAVE_RE = Regex("""^([A-Za-z_]\w*):save\s*$""")
         private val FILE_PATH_RE = Regex("""^:file:([A-Za-z_]\w*)\s*=>\s*:path\s*$""")
+        private val PAUSE_ALL_RE = Regex("""^(.*?)\s*=>\s*:pauseAll\s*$""")
+        private val PAUSE_ALL_BARE_RE = Regex("""^:pauseAll\s*$""")
+        private val RESUME_ALL_RE = Regex("""^(.*?)\s*=>\s*:resumeAll\s*$""")
+        private val RESUME_ALL_BARE_RE = Regex("""^:resumeAll\s*$""")
         private val ERROR_GET_RE = Regex("""^:error(?::(line|message|lines|messages))?\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val ERROR_SET_RE = Regex("""^(.+?)\s*=>\s*:error\s*$""")
         private val ERROR_RESOLVED_RE = Regex("""^(\d+)\s*=>\s*:error:resolve\s*$""")
+        private val ASSERT_RE = Regex("""^(.+?)\s*,\s*"([^"]*)"\s*=>\s*:assert\s*$""")
+        private val ASSERT_NO_MSG_RE = Regex("""^(.+?)\s*=>\s*:assert\s*$""")
         private val FUNC_RETURN_RE = Regex("""^:([A-Za-z_]\w*)\s*$""")
         private val RESULT_RE = Regex("""^(.+?)\s*=>\s*:result\s*$""")
         private val ACTIVE_TAB_RE = Regex("""^(\S+)(?:\s*,\s*(\S+))?\s*=>\s*:activeTab\s*$""")
         private val FUNC_CALL_LOCAL_CHAIN_RE = Regex("""^(.+?)\s*=>\s*\.:([A-Za-z_]\w*):([A-Za-z_]\w*)\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val FUNC_CALL_LOCAL_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*):([A-Za-z_]\w*)\s*$""")
-        private val TAB_CALL_CHAIN_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*)\s*=>\s*([A-Za-z_]\w*)\s*$""")
-        private val TAB_CALL_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*)\s*$""")
         private val TAB_CALL_ASYNC_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*!)\s*$""")
+        private val TAB_CALL_RE = Regex("""^(.+?)\s*=>\s*:([A-Za-z_]\w*)\s*$""")
         private val PATH_RE = Regex("""^([A-Za-z_]\w*)((?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))+)$""")
         private val INDEX_RE = Regex("""\b([A-Za-z_]\w*)((?::[lxyz]:(?:first|last|\d+|[A-Za-z_]\w*))+)\b""")
         private val DOLLAR_RE = Regex("""([A-Za-z_]\w*)\$([A-Za-z_]\w*)""")
@@ -2341,7 +2446,7 @@ class Interpreter(
         private val AGENT_STATUS_ALL_RE = Regex("""^:agent:status\s*=>\s*([A-Za-z_]\w*)\s*$""")
         private val AGENT_WAIT_TIMEOUT_RE = Regex("""^(.+?)\s*,\s*(.+?)\s*=>\s*:agent:wait:timeout\s*$""")
         private val AGENT_WAIT_RE = Regex("""^(.+?)\s*=>\s*:agent:wait\s*$""")
-        private val SIMPLE_RE = Regex("""^(.*?)\s*=>\s*:simple:([A-Za-z_]\w*)\s*$""")
+        private val SIMPLE_RE = Regex("""^(.*?)\s*=>\s*:simple:([A-Za-z_]\w*(?::[A-Za-z_]\w*)*)\s*$""")
         private val SHORT_MATH_NAMED_RE = Regex("""^(.+?)\s*=>\s*:(sum|min|max|avg|product|count)\s*$""")
         private val SHORT_DATA_NAMES = "push|pop|peek|reverse|unique|contains|slice|join|charAt|substring|indexOf|replace|lower|upper|trim|chars|remove|swap|deleteRange|replaceRange|size"
         private val SHORT_DATA_CHAIN_RE = Regex("""^(.+?)(?::([lxyz]))?\s*,\s*(.*?)\s*=>\s*:($SHORT_DATA_NAMES)\s*=>\s*([A-Za-z_]\w*)\s*$""")
@@ -2356,7 +2461,8 @@ class Interpreter(
             "save", "load", "get", "post", "filter", "matches", "size", "ws",
             "result", "log", "parameters", "message", "range",
             "repeat", "s", "path", "error", "error:line", "error:message",
-            "error:lines", "error:messages", "map", "reduce", "fold", "each", "simple"
+            "error:lines", "error:messages", "map", "reduce", "fold", "each", "simple",
+            "assert", "pauseAll", "resumeAll"
         )
         private val RESULT_NAMES_SUBST = RESULT_NAMES_ONE - setOf("math", "data", "json", "api")
         private val KNOWN_RESULT_KEYS = setOf(
