@@ -1,8 +1,10 @@
 package be.simple
 
+import androidx.compose.ui.unit.dp
 import be.`true`.AgentAction
 import be.`true`.Status
 import be.`true`.StepResult
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +22,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
     private var autoSaveJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Default)
     private val agentJobs = mutableMapOf<Int, Job>()
+    private val agentDeferred = mutableMapOf<Int, CompletableDeferred<String>>()
 
     private val baseDir: File
         get() = File(System.getProperty("user.home"), ".simple").apply { mkdirs() }
@@ -33,16 +36,16 @@ class MainScreenSystem(private val app: MainScreenApp) {
         try {
             loadSettings()
             loadProgress()
-            val startContent = load("start.true")
+            val startContent = load("start.cycle")
             if (!startContent.isNullOrBlank()) {
                 Substrate.startCode = startContent
-                Substrate.startFileName = "start.true"
+                Substrate.startFileName = "start.cycle"
             } else {
                 Substrate.startCode = Substrate.DEFAULT_CODE
-                save("start.true", Substrate.startCode)
+                save("start.cycle", Substrate.startCode)
             }
             refreshRecentFromDisk()
-            val main = "main.true"
+            val main = "main.cycle"
             val content = load(main)
             val code = content ?: Substrate.startCode
             if (content.isNullOrBlank()) save(main, Substrate.startCode)
@@ -50,6 +53,13 @@ class MainScreenSystem(private val app: MainScreenApp) {
             app.ensureAgentFor(main)
             pushRecent(main)
             app.ensureMainTab()
+            if (Substrate.fileOrder.isEmpty()) {
+                Substrate.fileOrder = TabsModel.tabs.map { it.fileName }
+            } else {
+                val existing = TabsModel.tabs.map { it.fileName }.toSet()
+                Substrate.fileOrder = Substrate.fileOrder.filter { it in existing } +
+                        (existing - Substrate.fileOrder.toSet())
+            }
         } catch (e: Exception) {
             Substrate.log("Init failed: ${e.message}")
             app.applyDefault()
@@ -64,12 +74,16 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 val kv = l.split("=", limit = 2)
                 if (kv.size != 2) continue
                 when (kv[0].trim()) {
-                    "welcomeShown" -> Substrate.welcomeShown = kv[1].trim() == "true"
-                    "tutorialCompleted" -> Substrate.tutorialCompleted = kv[1].trim() == "true"
                     "autoSyncDeclarations" -> Substrate.autoSyncDeclarations = kv[1].trim() == "true"
                     "speedMs" -> Substrate.speedMs = kv[1].trim().toLongOrNull() ?: 400L
                     "stepBackLimit" -> Substrate.stepBackLimit = kv[1].trim().toIntOrNull() ?: 12
                     "strictMode" -> Substrate.strictMode = kv[1].trim() == "true"
+                    "valuesCollapsed" -> Substrate.valuesCollapsed = kv[1].trim() == "true"
+                    "actionsCollapsed" -> Substrate.actionsCollapsed = kv[1].trim() == "true"
+                    "valuesWidth" -> Substrate.valuesWidthOverride = kv[1].trim().toFloatOrNull()?.dp
+                    "actionsWidth" -> Substrate.actionsWidthOverride = kv[1].trim().toFloatOrNull()?.dp
+                    "logHeight" -> Substrate.logHeightOverride = kv[1].trim().toFloatOrNull()?.dp
+                    "fileOrder" -> Substrate.fileOrder = kv[1].trim().split(",").filter { it.isNotBlank() }
                 }
             }
         } catch (_: Exception) {}
@@ -78,12 +92,16 @@ class MainScreenSystem(private val app: MainScreenApp) {
     fun saveSettings() {
         try {
             File(baseDir, "settings.txt").writeText(
-                "welcomeShown=${Substrate.welcomeShown}\n" +
-                        "tutorialCompleted=${Substrate.tutorialCompleted}\n" +
-                        "autoSyncDeclarations=${Substrate.autoSyncDeclarations}\n" +
+                "autoSyncDeclarations=${Substrate.autoSyncDeclarations}\n" +
                         "speedMs=${Substrate.speedMs}\n" +
                         "stepBackLimit=${Substrate.stepBackLimit}\n" +
-                        "strictMode=${Substrate.strictMode}\n"
+                        "strictMode=${Substrate.strictMode}\n" +
+                        "valuesCollapsed=${Substrate.valuesCollapsed}\n" +
+                        "actionsCollapsed=${Substrate.actionsCollapsed}\n" +
+                        "valuesWidth=${Substrate.valuesWidthOverride?.value ?: ""}\n" +
+                        "actionsWidth=${Substrate.actionsWidthOverride?.value ?: ""}\n" +
+                        "logHeight=${Substrate.logHeightOverride?.value ?: ""}\n" +
+                        "fileOrder=${Substrate.fileOrder.joinToString(",")}\n"
             )
         } catch (_: Exception) {}
     }
@@ -127,16 +145,28 @@ class MainScreenSystem(private val app: MainScreenApp) {
     }
 
     fun newFile() {
-        val n = TabsModel.tabs.size + 1
+        var n = TabsModel.tabs.size + 1
+        while (TabsModel.byFileName("tab$n.cycle") != null) n++
         val interp = app.newInterpreter()
-        TabsModel.create("tab$n.true", Substrate.startCode, interpreter = interp)
-        app.ensureAgentFor("tab$n.true")
+        TabsModel.create("tab$n.cycle", Substrate.startCode, interpreter = interp)
+        app.ensureAgentFor("tab$n.cycle")
+        Substrate.addFileToOrder("tab$n.cycle")
+        app.publishActive()
+    }
+
+    fun newAgent() {
+        var n = TabsModel.tabs.size + 1
+        while (TabsModel.byFileName("agent-$n.agent") != null) n++
+        val name = "agent-$n.agent"
+        val interp = app.newInterpreter()
+        TabsModel.create(name, Substrate.DEFAULT_CODE, interpreter = interp)
+        app.ensureAgentFor(name)
+        Substrate.addFileToOrder(name)
         app.publishActive()
     }
 
     fun openFileDialog(): File? {
-        val dialog = FileDialog(null as Frame?, "Open .true", FileDialog.LOAD).apply {
-            setFilenameFilter { _, name -> name.endsWith(".true") }
+        val dialog = FileDialog(null as Frame?, "Open file", FileDialog.LOAD).apply {
             directory = (projectDir ?: baseDir).absolutePath
             isVisible = true
         }
@@ -157,33 +187,36 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun openFolder(dir: File) {
         projectDir = dir
-        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".true") }?.sortedBy { it.name } ?: emptyList()
-        if (files.isEmpty()) { Substrate.log("No .true files in ${dir.name}"); return }
+        val files = dir.listFiles { f -> f.isFile }?.sortedBy { it.name } ?: emptyList()
+        if (files.isEmpty()) { Substrate.log("No files in ${dir.name}"); return }
         TabsModel.tabs.clear()
         AgentsModel.agents.clear()
         Substrate.viewingAgentId = null
-        val main = files.firstOrNull { it.name == "main.true" } ?: files.first()
+        Substrate.fileOrder = emptyList()
+        val main = files.firstOrNull { it.name == "main.cycle" } ?: files.first()
         val interp0 = app.newInterpreter()
         TabsModel.create(main.name, main.readText(), interpreter = interp0)
         app.ensureAgentFor(main.name)
+        Substrate.addFileToOrder(main.name)
         files.filter { it != main }.forEach {
             val i = app.newInterpreter()
             TabsModel.create(it.name, it.readText(), makeActive = false, interpreter = i)
             app.ensureAgentFor(it.name)
+            Substrate.addFileToOrder(it.name)
         }
         app.publishActive()
         Substrate.log("Opened folder ${dir.name} (${files.size} files)")
     }
 
     fun saveDialog(): File? {
-        val dialog = FileDialog(null as Frame?, "Save .true", FileDialog.SAVE).apply {
+        val dialog = FileDialog(null as Frame?, "Save", FileDialog.SAVE).apply {
             directory = (projectDir ?: baseDir).absolutePath
             file = app.fileName()
             isVisible = true
         }
         val dir = dialog.directory ?: return null
         val name = dialog.file ?: return null
-        return File(dir, if (name.endsWith(".true")) name else "$name.true")
+        return File(dir, name)
     }
 
     fun openFile(file: File) {
@@ -192,6 +225,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         val interp = app.newInterpreter()
         TabsModel.open(file.name, content, interp)
         app.ensureAgentFor(file.name)
+        Substrate.addFileToOrder(file.name)
         pushRecent(file.name)
         app.publishActive()
         Substrate.log("Opened ${file.name}")
@@ -213,12 +247,15 @@ class MainScreenSystem(private val app: MainScreenApp) {
         val tab = TabsModel.active() ?: return
         try {
             file.writeText(tab.code)
-            val agent = AgentsModel.agentFor(tab.fileName)
+            val oldName = tab.fileName
+            val agent = AgentsModel.agentFor(oldName)
             tab.fileName = file.name
+            tab.kind = fileKindOf(file.name)
             tab.dirty = false
             if (agent != null) {
                 agent.fileName = file.name
             }
+            Substrate.fileOrder = Substrate.fileOrder.map { if (it == oldName) file.name else it }
             pushRecent(file.name)
             app.publishActive()
             Substrate.log("Saved as ${file.name}")
@@ -229,23 +266,25 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun saveAsStart() {
         app.saveCurrentAsStart()
-        val ok = save("start.true", Substrate.startCode)
-        if (ok) Substrate.log("Start state saved (start.true)") else Substrate.log("Start state save failed")
+        val ok = save("start.cycle", Substrate.startCode)
+        if (ok) Substrate.log("Start state saved (start.cycle)") else Substrate.log("Start state save failed")
     }
 
     fun renameFile(oldName: String, newName: String) {
-        val fixed = if (newName.endsWith(".true")) newName else "$newName.true"
-        if (fixed == oldName) return
-        if (TabsModel.tabs.any { it.fileName == fixed }) {
-            Substrate.log("Rename failed: '$fixed' already exists")
+        if (newName.isBlank()) return
+        if (oldName == newName) return
+        if (TabsModel.tabs.any { it.fileName == newName }) {
+            Substrate.log("Rename failed: '$newName' already exists")
             return
         }
         val tab = TabsModel.tabs.firstOrNull { it.fileName == oldName } ?: return
-        AgentsModel.agentFor(oldName)?.fileName = fixed
-        tab.fileName = fixed
-        Substrate.recentFiles = Substrate.recentFiles.map { if (it == oldName) fixed else it }
-        if (Substrate.activeFileName == oldName) Substrate.activeFileName = fixed
-        Substrate.log("Renamed $oldName → $fixed")
+        AgentsModel.agentFor(oldName)?.fileName = newName
+        tab.fileName = newName
+        tab.kind = fileKindOf(newName)
+        Substrate.recentFiles = Substrate.recentFiles.map { if (it == oldName) newName else it }
+        Substrate.fileOrder = Substrate.fileOrder.map { if (it == oldName) newName else it }
+        if (Substrate.activeFileName == oldName) Substrate.activeFileName = newName
+        Substrate.log("Renamed $oldName → $newName")
         app.publishActive()
     }
 
@@ -255,9 +294,11 @@ class MainScreenSystem(private val app: MainScreenApp) {
     }
 
     private fun refreshRecentFromDisk() {
-        val files = baseDir.listFiles { f -> f.isFile && f.name.endsWith(".true") }?.map { it.name }?.sorted().orEmpty()
+        val files = baseDir.listFiles { f -> f.isFile }?.map { it.name }?.sorted().orEmpty()
         if (Substrate.recentFiles.isEmpty() && files.isNotEmpty()) Substrate.recentFiles = files.take(10)
     }
+
+    // ---------- agents ----------
 
     fun startAgent(agentId: Int) {
         val agent = AgentsModel.byId(agentId) ?: return
@@ -288,6 +329,9 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 if (agent.status == Status.RUNNING) agent.status = Status.PAUSED
             }
             agent.interpreter.waitUntilMs = null
+            if (agent.waiter) {
+                agent.status = Status.PAUSED
+            }
         }
     }
 
@@ -296,6 +340,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         agentJobs[agentId]?.cancel()
         agentJobs.remove(agentId)
         agent.status = Status.PAUSED
+        agent.lastPressed = "pause"
     }
 
     fun stopAgent(agentId: Int) {
@@ -305,10 +350,24 @@ class MainScreenSystem(private val app: MainScreenApp) {
         agent.interpreter.waitUntilMs = null
         agent.interpreter.setStatusPublic(Status.STOPPED)
         agent.status = Status.STOPPED
+        agent.lastPressed = "stop"
     }
 
     fun startAllAgents() { AgentsModel.agents.forEach { startAgent(it.id) } }
+    fun pauseAllAgents() { AgentsModel.agents.forEach { pauseAgent(it.id) } }
     fun stopAllAgents() { AgentsModel.agents.forEach { stopAgent(it.id) } }
+
+    fun stepAllAgents() {
+        AgentsModel.agents.forEach { agent ->
+            if (agent.status != Status.RUNNING) stepAgent(agent.id)
+        }
+    }
+
+    fun stepBackAllAgents() {
+        AgentsModel.agents.forEach { agent ->
+            if (agent.status != Status.RUNNING) stepBackAgent(agent.id)
+        }
+    }
 
     fun stepAgent(agentId: Int): StepResult? {
         val agent = AgentsModel.byId(agentId) ?: return null
@@ -320,7 +379,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         val agent = AgentsModel.byId(agentId) ?: return null
         if (agent.status == Status.RUNNING) return null
         val r = agent.interpreter.executeStepBack() ?: return null
-        scope.launch(Dispatchers.Main) { app.applyResult(agent, r) }
+        app.applyResult(agent, r)
         return r
     }
 
@@ -330,16 +389,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun controlAgent(callerId: Int, name: String, action: AgentAction, arg: String?) {
         when (action) {
-            AgentAction.CURRENT_FILE -> {
-                val a = AgentsModel.byName(name) ?: return
-                val dst = arg ?: return
-                a.interpreter.results[dst] = a.fileName
-            }
-            AgentAction.CURRENT_STEP -> {
-                val a = AgentsModel.byName(name) ?: return
-                val dst = arg ?: return
-                a.interpreter.results[dst] = a.currentStep.toString()
-            }
             AgentAction.STATUS -> {
                 if (name == "*") {
                     val dst = arg ?: return
@@ -352,18 +401,10 @@ class MainScreenSystem(private val app: MainScreenApp) {
                     a.interpreter.results[dst] = a.status.name
                 }
             }
-            AgentAction.STOP -> AgentsModel.byName(name)?.let { stopAgent(it.id) }
-            AgentAction.PAUSE -> AgentsModel.byName(name)?.let { pauseAgent(it.id) }
-            AgentAction.RESUME -> AgentsModel.byName(name)?.let { startAgent(it.id) }
-            AgentAction.MOVE_TO_FILE -> moveAgentTo(AgentsModel.byName(name)?.id ?: return, arg ?: return)
-            AgentAction.COPY_TO_FILE -> copyAgentTo(AgentsModel.byName(name)?.id ?: return, arg ?: return)
-            AgentAction.DELETE -> {
-                if (name.startsWith("*file:")) {
-                    val fname = name.removePrefix("*file:")
-                    deleteFileCascade(fname)
-                } else {
-                    AgentsModel.byName(name)?.let { deleteAgent(it.id) }
-                }
+            AgentAction.WAITER -> {
+                val a = AgentsModel.byName(name) ?: return
+                val dst = arg ?: return
+                a.interpreter.results[dst] = if (a.waiter) "1" else "0"
             }
             AgentAction.WAIT -> {
                 val a = AgentsModel.byName(name) ?: AgentsModel.byId(callerId)
@@ -374,73 +415,34 @@ class MainScreenSystem(private val app: MainScreenApp) {
         }
     }
 
-    fun moveAgentTo(agentId: Int, targetFile: String): Boolean {
-        val agent = AgentsModel.byId(agentId) ?: return false
-        if (agent.fileName == targetFile) {
-            Substrate.log("Warning: ${agent.name} is already on $targetFile")
-            return true
-        }
-        val occupied = AgentsModel.agentFor(targetFile)
-        if (occupied != null) {
-            Substrate.log("Cannot move ${agent.name} to $targetFile: occupied by ${occupied.name}")
-            return false
-        }
-        val oldFile = agent.fileName
-        AgentsModel.remove(agent.id)
-        val a = AgentsModel.create(agent.name, targetFile, agent.interpreter)
-        if (a != null) {
-            a.status = agent.status
-            a.currentStep = agent.currentStep
-            a.variablesSnapshot = agent.variablesSnapshot
-            a.resultsSnapshot = agent.resultsSnapshot
-            a.constantsSnapshot = agent.constantsSnapshot
-            a.hiddenSnapshot = agent.hiddenSnapshot
-            if (Substrate.viewingAgentId == agent.id) Substrate.viewingAgentId = a.id
-            Substrate.log("Moved ${agent.name} from $oldFile to $targetFile")
-        }
+    fun switchAgentFile(agent: AgentState, target: String): Boolean {
+        val tab = TabsModel.byFileName(target) ?: run {
+            val file = projectDir?.let { File(it, target) } ?: File(baseDir, target)
+            if (!file.exists()) { Substrate.log("File not found: $target"); return false }
+            val interp = app.newInterpreter()
+            TabsModel.create(target, file.readText(), interpreter = interp)
+            app.ensureAgentFor(target)
+            Substrate.addFileToOrder(target)
+            TabsModel.byFileName(target)
+        } ?: return false
+
+        agent.fileName = target
+        agent.currentStep = 1
+        agent.interpreter.reset()
+        Substrate.log("Agent ${agent.name} → $target")
         app.publishActive()
         return true
     }
 
-    fun copyAgentTo(agentId: Int, targetFile: String): Boolean {
-        val agent = AgentsModel.byId(agentId) ?: return false
-        if (AgentsModel.agentFor(targetFile) != null) {
-            Substrate.log("Cannot copy ${agent.name} to $targetFile: occupied")
-            return false
-        }
-        if (AgentsModel.agents.size >= AgentsModel.MAX_AGENTS) {
-            Substrate.log("Cannot copy: max agents reached")
-            return false
-        }
-        val n = AgentsModel.agents.size + 1
-        val interp = app.newInterpreter()
-        agent.interpreter.variables.forEach { (k, v) -> interp.variables[k] = v }
-        agent.interpreter.results.forEach { (k, v) -> interp.results[k] = v }
-        agent.interpreter.constants.forEach { interp.constants.add(it) }
-        agent.interpreter.hiddenVariables.forEach { interp.hiddenVariables.add(it) }
-        interp.forceStep(agent.currentStep)
-        val a = AgentsModel.create("agent-$n", targetFile, interp)
-        if (a != null) {
-            a.currentStep = agent.currentStep
-            Substrate.log("Copied ${agent.name} to $targetFile as ${a.name}")
-        }
-        app.publishActive()
-        return a != null
-    }
-
-    fun deleteAgent(agentId: Int) {
-        val agent = AgentsModel.byId(agentId) ?: return
-        agentJobs[agentId]?.cancel()
-        agentJobs.remove(agentId)
-        AgentsModel.remove(agentId)
-        if (Substrate.viewingAgentId == agentId) Substrate.viewingAgentId = null
-        Substrate.log("Deleted agent ${agent.name}")
-        app.publishActive()
-    }
-
     fun deleteFileCascade(fileName: String) {
-        AgentsModel.agentFor(fileName)?.let { deleteAgent(it.id) }
+        AgentsModel.agentFor(fileName)?.let { agent ->
+            agentJobs[agent.id]?.cancel()
+            agentJobs.remove(agent.id)
+            agentDeferred.remove(agent.id)
+            AgentsModel.remove(agent.id)
+        }
         TabsModel.closeByName(fileName)
+        Substrate.removeFileFromOrder(fileName)
         if (Substrate.expandedFileName == fileName) Substrate.expandedFileName = null
         if (Substrate.activeFileName == fileName) {
             val next = TabsModel.active()
@@ -450,6 +452,70 @@ class MainScreenSystem(private val app: MainScreenApp) {
         Substrate.log("Deleted file $fileName")
         app.publishActive()
     }
+
+    // ---------- file-functions ----------
+
+    fun callFile(name: String, parameters: String): String {
+        val tab = TabsModel.tabs.firstOrNull { it.fileName.removeSuffix(".cycle") == name }
+            ?: TabsModel.tabs.firstOrNull { it.fileName.removeSuffix(".agent") == name }
+            ?: return ""
+        val existing = AgentsModel.agentFor(tab.fileName)
+        if (existing != null && existing.waiter) {
+            val deferred = CompletableDeferred<String>()
+            agentDeferred[existing.id] = deferred
+            existing.interpreter.variables["parameters"] = parameters
+            startAgent(existing.id)
+            return runBlockingAwait(deferred)
+        }
+        return callFileLocal(tab, parameters)
+    }
+
+    private fun callFileLocal(tab: TabState, parameters: String): String {
+        val local = app.newInterpreter()
+        local.variables["parameters"] = parameters
+        var guard = 0
+        while (guard < 10000) {
+            guard++
+            val res = local.executeOneStep(tab.code)
+            if (res.status == Status.FINISHED) break
+            if (res.errorLine != null) break
+        }
+        return local.results["result"] ?: ""
+    }
+
+    private fun runBlockingAwait(deferred: CompletableDeferred<String>): String {
+        var result = ""
+        var waited = 0L
+        while (!deferred.isCompleted && waited < 30_000L) {
+            Thread.sleep(10)
+            waited += 10
+        }
+        if (deferred.isCompleted) result = deferred.getCompleted()
+        return result
+    }
+
+    fun onAgentFinished(agent: AgentState) {
+        if (!agent.waiter) return
+        val deferred = agentDeferred.remove(agent.id) ?: return
+        val value = agent.interpreter.results["result"] ?: ""
+        deferred.complete(value)
+    }
+
+    // ---------- file order ----------
+
+    fun moveFileUp(fileName: String) {
+        Substrate.moveFileUp(fileName)
+        saveSettings()
+        app.publishActive()
+    }
+
+    fun moveFileDown(fileName: String) {
+        Substrate.moveFileDown(fileName)
+        saveSettings()
+        app.publishActive()
+    }
+
+    // ---------- save/load ----------
 
     fun save(name: String, content: String): Boolean = try {
         File(baseDir, name).writeText(content); true

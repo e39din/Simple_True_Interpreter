@@ -14,40 +14,34 @@ class AgentsCoreTest {
         Substrate.viewingAgentId = null
         Substrate.expandedFileName = null
         Substrate.activeFileName = ""
+        Substrate.fileOrder = emptyList()
     }
 
     // ---------- 1. AgentsModel basics ----------
 
     @Test fun `agentFor returns null on empty`() {
-        assertNull(AgentsModel.agentFor("a.true"))
+        assertNull(AgentsModel.agentFor("a.agent"))
     }
 
     @Test fun `create adds agent with unique id`() {
-        val a1 = AgentsModel.create("agent-1", "a.true", Interpreter())
-        val a2 = AgentsModel.create("agent-2", "b.true", Interpreter())
+        val a1 = AgentsModel.create("agent-1", "a.agent", Interpreter())
+        val a2 = AgentsModel.create("agent-2", "b.agent", Interpreter())
         assertNotNull(a1)
         assertNotNull(a2)
         assertNotEquals(a1!!.id, a2!!.id)
     }
 
-    @Test fun `create rejects duplicate file`() {
-        AgentsModel.create("agent-1", "a.true", Interpreter())
-        val second = AgentsModel.create("agent-2", "a.true", Interpreter())
-        assertNull(second)
+    @Test fun `create allows multiple agents on same file`() {
+        val a1 = AgentsModel.create("agent-1", "a.agent", Interpreter())
+        val a2 = AgentsModel.create("agent-2", "a.agent", Interpreter())
+        assertNotNull(a1)
+        assertNotNull(a2)
     }
 
     @Test fun `create rejects duplicate name`() {
-        AgentsModel.create("agent-1", "a.true", Interpreter())
-        val second = AgentsModel.create("agent-1", "b.true", Interpreter())
+        AgentsModel.create("agent-1", "a.agent", Interpreter())
+        val second = AgentsModel.create("agent-1", "b.agent", Interpreter())
         assertNull(second)
-    }
-
-    @Test fun `create rejects after MAX_AGENTS`() {
-        for (i in 1..AgentsModel.MAX_AGENTS) {
-            AgentsModel.create("agent-$i", "file$i.true", Interpreter())
-        }
-        val extra = AgentsModel.create("agent-extra", "extra.true", Interpreter())
-        assertNull(extra)
     }
 
     @Test fun `colorAt returns rainbow by index`() {
@@ -65,12 +59,12 @@ class AgentsCoreTest {
     }
 
     @Test fun `byId finds agent`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())
         assertEquals(a, AgentsModel.byId(a!!.id))
     }
 
     @Test fun `byName finds agent`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())
         assertEquals(a, AgentsModel.byName("agent-1"))
     }
 
@@ -79,65 +73,104 @@ class AgentsCoreTest {
     }
 
     @Test fun `remove deletes agent`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         AgentsModel.remove(a.id)
         assertNull(AgentsModel.byId(a.id))
     }
 
     @Test fun `agentFor returns correct agent for file`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())
-        assertEquals(a, AgentsModel.agentFor("a.true"))
-        assertNull(AgentsModel.agentFor("b.true"))
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())
+        assertEquals(a, AgentsModel.agentFor("a.agent"))
+        assertNull(AgentsModel.agentFor("b.agent"))
     }
 
     // ---------- 2. AgentState fields ----------
 
     @Test fun `agent has default status STOPPED`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         assertEquals(Status.STOPPED, a.status)
         assertEquals(1, a.currentStep)
         assertEquals(400L, a.speedMs)
     }
 
     @Test fun `agent currentStep independent from interpreter`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         a.currentStep = 5
         assertEquals(5, a.currentStep)
         assertEquals(1, a.interpreter.currentStep)
     }
 
     @Test fun `agent status mutable`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         a.status = Status.RUNNING
         assertEquals(Status.RUNNING, a.status)
         a.status = Status.PAUSED
         assertEquals(Status.PAUSED, a.status)
     }
 
-    // ---------- 3. viewingAgentId ----------
+    @Test fun `agent has default waiter false`() {
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
+        assertFalse(a.waiter)
+    }
+
+    @Test fun `agent has default lastPressed null`() {
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
+        assertNull(a.lastPressed)
+    }
+
+    // ---------- 3. waiter auto-detection ----------
+
+    @Test fun `hasResultMarker detects result marker`() {
+        assertTrue(AgentsModel.hasResultMarker("a = 5\n:result"))
+        assertFalse(AgentsModel.hasResultMarker("a = 5\n=> :stop"))
+    }
+
+    @Test fun `recalcWaiter sets waiter true`() {
+        TabsModel.create("f.agent", "a = 5\n:result")
+        val a = AgentsModel.create("agent-1", "f.agent", Interpreter())!!
+        AgentsModel.recalcWaiter(a)
+        assertTrue(a.waiter)
+    }
+
+    @Test fun `recalcWaiter sets waiter false`() {
+        TabsModel.create("f.agent", "a = 5\n=> :stop")
+        val a = AgentsModel.create("agent-1", "f.agent", Interpreter())!!
+        AgentsModel.recalcWaiter(a)
+        assertFalse(a.waiter)
+    }
+
+    // ---------- 4. viewingAgentId ----------
 
     @Test fun `viewingAgentId default null`() {
         assertNull(Substrate.viewingAgentId)
     }
 
     @Test fun `viewingAgentId changes`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         Substrate.viewingAgentId = a.id
         assertEquals(a.id, Substrate.viewingAgentId)
     }
 
-    @Test fun `remove agent clears viewing`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
-        Substrate.viewingAgentId = a.id
-        AgentsModel.remove(a.id)
-        if (AgentsModel.byId(a.id) == null) {
-            // симуляция: если viewing указывает на удалённого, обнуляем
-            Substrate.viewingAgentId = null
-        }
-        assertNull(Substrate.viewingAgentId)
+    // ---------- 5. AgentsModel rename ----------
+
+    @Test fun `rename changes name`() {
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
+        assertTrue(AgentsModel.rename(a.id, "agent-new"))
+        assertEquals("agent-new", a.name)
     }
 
-    // ---------- 4. Substrate / moved fields ----------
+    @Test fun `rename rejects duplicate`() {
+        AgentsModel.create("agent-1", "a.agent", Interpreter())
+        val b = AgentsModel.create("agent-2", "b.agent", Interpreter())!!
+        assertFalse(AgentsModel.rename(b.id, "agent-1"))
+    }
+
+    @Test fun `rename rejects blank`() {
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
+        assertFalse(AgentsModel.rename(a.id, ""))
+    }
+
+    // ---------- 6. Substrate fields ----------
 
     @Test fun `substrate has viewingAgentId`() {
         Substrate.viewingAgentId = 5
@@ -150,12 +183,12 @@ class AgentsCoreTest {
     }
 
     @Test fun `substrate has expandedFileName`() {
-        Substrate.expandedFileName = "a.true"
-        assertEquals("a.true", Substrate.expandedFileName)
+        Substrate.expandedFileName = "a.agent"
+        assertEquals("a.agent", Substrate.expandedFileName)
         Substrate.expandedFileName = null
     }
 
-    // ---------- 5. logFilter / logCount ----------
+    // ---------- 7. logFilter / logCount ----------
 
     @Test fun `logFilter defaults to All`() {
         assertEquals("All", Substrate.logFilter)
@@ -182,7 +215,7 @@ class AgentsCoreTest {
         assertEquals("All", Substrate.logFilter)
     }
 
-    // ---------- 6. Templates ----------
+    // ---------- 8. Templates ----------
 
     @Test fun `pinTemplate deduplicates`() {
         Substrate.pinnedTemplates = emptyList()
@@ -211,37 +244,99 @@ class AgentsCoreTest {
         assertEquals(Substrate.DEFAULT_TEMPLATE_GROUPS.size, Substrate.templateGroups.size)
     }
 
-    // ---------- 7. TabsModel interaction ----------
+    // ---------- 9. TabsModel interaction ----------
 
     @Test fun `tabs closeByName removes file`() {
         TabsModel.tabs.clear()
-        TabsModel.create("a.true", "1 = x")
-        TabsModel.create("b.true", "2 = y")
-        TabsModel.closeByName("a.true")
-        assertNull(TabsModel.byFileName("a.true"))
-        assertNotNull(TabsModel.byFileName("b.true"))
+        TabsModel.create("a.cycle", "1 = x")
+        TabsModel.create("b.cycle", "2 = y")
+        TabsModel.closeByName("a.cycle")
+        assertNull(TabsModel.byFileName("a.cycle"))
+        assertNotNull(TabsModel.byFileName("b.cycle"))
     }
 
     @Test fun `tabs byFileName finds`() {
         TabsModel.tabs.clear()
-        val t = TabsModel.create("a.true", "1 = x")
-        assertEquals(t, TabsModel.byFileName("a.true"))
+        val t = TabsModel.create("a.cycle", "1 = x")
+        assertEquals(t, TabsModel.byFileName("a.cycle"))
     }
 
-    // ---------- 8. speedMs / stepBackLimit per-agent ----------
+    // ---------- 10. speedMs per-agent ----------
 
     @Test fun `agent speedMs mutable`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
         a.speedMs = 100
         assertEquals(100L, a.speedMs)
     }
 
     @Test fun `agents independent speedMs`() {
-        val a = AgentsModel.create("agent-1", "a.true", Interpreter())!!
-        val b = AgentsModel.create("agent-2", "b.true", Interpreter())!!
+        val a = AgentsModel.create("agent-1", "a.agent", Interpreter())!!
+        val b = AgentsModel.create("agent-2", "b.agent", Interpreter())!!
         a.speedMs = 100
         b.speedMs = 500
         assertEquals(100L, a.speedMs)
         assertEquals(500L, b.speedMs)
+    }
+
+    // ---------- 11. fileOrder ----------
+
+    @Test fun `addFileToOrder adds`() {
+        Substrate.fileOrder = emptyList()
+        Substrate.addFileToOrder("a.cycle")
+        assertEquals(listOf("a.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `addFileToOrder skips duplicate`() {
+        Substrate.fileOrder = listOf("a.cycle")
+        Substrate.addFileToOrder("a.cycle")
+        assertEquals(listOf("a.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `moveFileUp swaps`() {
+        Substrate.fileOrder = listOf("a.cycle", "b.cycle")
+        Substrate.moveFileUp("b.cycle")
+        assertEquals(listOf("b.cycle", "a.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `moveFileDown swaps`() {
+        Substrate.fileOrder = listOf("a.cycle", "b.cycle")
+        Substrate.moveFileDown("a.cycle")
+        assertEquals(listOf("b.cycle", "a.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `moveFileUp first noop`() {
+        Substrate.fileOrder = listOf("a.cycle", "b.cycle")
+        Substrate.moveFileUp("a.cycle")
+        assertEquals(listOf("a.cycle", "b.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `moveFileDown last noop`() {
+        Substrate.fileOrder = listOf("a.cycle", "b.cycle")
+        Substrate.moveFileDown("b.cycle")
+        assertEquals(listOf("a.cycle", "b.cycle"), Substrate.fileOrder)
+    }
+
+    @Test fun `removeFileFromOrder removes`() {
+        Substrate.fileOrder = listOf("a.cycle", "b.cycle")
+        Substrate.removeFileFromOrder("a.cycle")
+        assertEquals(listOf("b.cycle"), Substrate.fileOrder)
+    }
+
+    // ---------- 12. FileKind ----------
+
+    @Test fun `fileKindOf agent`() {
+        assertEquals(FileKind.AGENT, fileKindOf("main.agent"))
+    }
+
+    @Test fun `fileKindOf cycle`() {
+        assertEquals(FileKind.CYCLE, fileKindOf("main.cycle"))
+    }
+
+    @Test fun `fileKindOf other`() {
+        assertEquals(FileKind.OTHER, fileKindOf("data.txt"))
+    }
+
+    @Test fun `fileKindOf no extension`() {
+        assertEquals(FileKind.OTHER, fileKindOf("notes"))
     }
 }

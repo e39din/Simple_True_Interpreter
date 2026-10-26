@@ -20,16 +20,17 @@ class MainScreenCoreTest {
         Substrate.logFilter = "All"
         Substrate.autoSyncDeclarations = true
         Substrate.strictMode = false
+        Substrate.fileOrder = emptyList()
         Substrate.clearLog()
         app = MainScreenApp()
     }
 
     // ---------- 1. ensureMainTab / applyDefault / applyCode ----------
 
-    @Test fun `ensureMainTab creates main true`() {
+    @Test fun `ensureMainTab creates main cycle`() {
         app.ensureMainTab()
-        assertNotNull(TabsModel.byFileName("main.true"))
-        assertNotNull(AgentsModel.agentFor("main.true"))
+        assertNotNull(TabsModel.byFileName("main.cycle"))
+        assertNotNull(AgentsModel.agentFor("main.cycle"))
     }
 
     @Test fun `applyDefault resets code and agent`() {
@@ -37,17 +38,25 @@ class MainScreenCoreTest {
         app.applyDefault()
         val tab = TabsModel.active()!!
         assertEquals(Substrate.DEFAULT_CODE, tab.code)
-        val agent = AgentsModel.agentFor("main.true")!!
+        val agent = AgentsModel.agentFor("main.cycle")!!
         assertEquals(Status.STOPPED, agent.status)
         assertEquals(1, agent.currentStep)
     }
 
     @Test fun `applyCode sets code`() {
         app.ensureMainTab()
-        app.applyCode("x.true", "1 = a\n=> stop")
+        app.applyCode("x.cycle", "1 = a\n=> :stop")
         val tab = TabsModel.active()!!
-        assertEquals("x.true", tab.fileName)
-        assertEquals("1 = a\n=> stop", tab.code)
+        assertEquals("x.cycle", tab.fileName)
+        assertEquals("1 = a\n=> :stop", tab.code)
+        assertEquals(FileKind.CYCLE, tab.kind)
+    }
+
+    @Test fun `applyCode sets agent kind`() {
+        app.ensureMainTab()
+        app.applyCode("x.agent", "1 = a\n=> :stop")
+        val tab = TabsModel.active()!!
+        assertEquals(FileKind.AGENT, tab.kind)
     }
 
     // ---------- 2. resetFile ----------
@@ -56,28 +65,36 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "modified"
-        app.resetFile("main.true")
+        app.resetFile("main.cycle")
         assertEquals(Substrate.startCode, tab.code)
     }
 
     @Test fun `resetFile resets agent currentStep`() {
         app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.true")!!
+        val agent = AgentsModel.agentFor("main.cycle")!!
         agent.currentStep = 5
         agent.status = Status.RUNNING
-        app.resetFile("main.true")
+        app.resetFile("main.cycle")
         assertEquals(1, agent.currentStep)
         assertEquals(Status.STOPPED, agent.status)
     }
 
     @Test fun `resetFile clears snapshots`() {
         app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.true")!!
+        val agent = AgentsModel.agentFor("main.cycle")!!
         agent.variablesSnapshot = mapOf("a" to "1")
         agent.resultsSnapshot = mapOf("r" to "2")
-        app.resetFile("main.true")
+        app.resetFile("main.cycle")
         assertTrue(agent.variablesSnapshot.isEmpty())
         assertTrue(agent.resultsSnapshot.isEmpty())
+    }
+
+    @Test fun `resetFile clears lastPressed`() {
+        app.ensureMainTab()
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        agent.lastPressed = "play"
+        app.resetFile("main.cycle")
+        assertNull(agent.lastPressed)
     }
 
     // ---------- 3. syncVariablesFromCode ----------
@@ -86,7 +103,7 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "42 = a\nhello = b"
-        app.syncVariablesFromCode()
+        app.syncVariablesFromCode(force = true)
         assertEquals("42", tab.interpreter.variables["a"])
         assertEquals("hello", tab.interpreter.variables["b"])
     }
@@ -95,7 +112,7 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "42 = a @"
-        app.syncVariablesFromCode()
+        app.syncVariablesFromCode(force = true)
         assertTrue("a" in tab.interpreter.constants)
     }
 
@@ -103,7 +120,7 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "42 = a *"
-        app.syncVariablesFromCode()
+        app.syncVariablesFromCode(force = true)
         assertTrue("a" in tab.interpreter.hiddenVariables)
     }
 
@@ -111,15 +128,15 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "5 = nothing"
-        app.syncVariablesFromCode()
+        app.syncVariablesFromCode(force = true)
         assertNull(tab.interpreter.variables["nothing"])
     }
 
     @Test fun `syncVariablesFromCode ignores math chains`() {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
-        tab.code = "a + 1 => math => a"
-        app.syncVariablesFromCode()
+        tab.code = "a + 1 => :math => a"
+        app.syncVariablesFromCode(force = true)
         assertFalse("math" in tab.interpreter.variables)
     }
 
@@ -127,9 +144,18 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "42 = a"
-        app.syncVariablesFromCode()
-        val agent = AgentsModel.agentFor("main.true")!!
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
         assertEquals("42", agent.variablesSnapshot["a"])
+    }
+
+    @Test fun `syncVariablesFromCode preserves old values when not forced`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.interpreter.variables["a"] = "5"
+        tab.code = "0 = a"
+        app.syncVariablesFromCode(force = false)
+        assertEquals("5", tab.interpreter.variables["a"])
     }
 
     // ---------- 4. deleteVariable ----------
@@ -138,8 +164,8 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "5 = a\n10 = b"
-        app.syncVariablesFromCode()
-        Substrate.viewingAgentId = AgentsModel.agentFor("main.true")!!.id
+        app.syncVariablesFromCode(force = true)
+        Substrate.viewingAgentId = AgentsModel.agentFor("main.cycle")!!.id
         app.deleteVariable("a")
         assertNull(tab.interpreter.variables["a"])
         assertEquals("10", tab.interpreter.variables["b"])
@@ -149,8 +175,8 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "5 = a\n10 = b"
-        app.syncVariablesFromCode()
-        Substrate.viewingAgentId = AgentsModel.agentFor("main.true")!!.id
+        app.syncVariablesFromCode(force = true)
+        Substrate.viewingAgentId = AgentsModel.agentFor("main.cycle")!!.id
         app.deleteVariable("a")
         assertFalse(tab.code.contains("5 = a"))
         assertTrue(tab.code.contains("10 = b"))
@@ -160,8 +186,8 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
         tab.code = "5 = a"
-        app.syncVariablesFromCode()
-        val agent = AgentsModel.agentFor("main.true")!!
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
         Substrate.viewingAgentId = agent.id
         app.deleteVariable("a")
         assertNull(agent.variablesSnapshot["a"])
@@ -230,7 +256,7 @@ class MainScreenCoreTest {
     @Test fun `validateCurrent fails on unknown label`() {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
-        tab.code = "^ nope\n=> stop"
+        tab.code = "^ nope\n=> :stop"
         val ok = app.validateCurrent()
         assertFalse(ok)
         assertTrue(Substrate.errorLines.isNotEmpty())
@@ -239,7 +265,7 @@ class MainScreenCoreTest {
     @Test fun `validateCurrent succeeds on valid code`() {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
-        tab.code = "1 = a\n=> stop"
+        tab.code = "1 = a\n=> :stop"
         val ok = app.validateCurrent()
         assertTrue(ok)
     }
@@ -248,7 +274,7 @@ class MainScreenCoreTest {
         app.ensureMainTab()
         Substrate.strictMode = true
         val tab = TabsModel.active()!!
-        tab.code = "a => my:custom"
+        tab.code = "a => :my:custom"
         val ok = app.validateCurrent()
         assertFalse(ok)
         Substrate.strictMode = false
@@ -264,15 +290,15 @@ class MainScreenCoreTest {
 
     @Test fun `viewingAgent returns agent`() {
         app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.true")!!
+        val agent = AgentsModel.agentFor("main.cycle")!!
         Substrate.viewingAgentId = agent.id
         assertEquals(agent, app.viewingAgent())
     }
 
     @Test fun `setActiveFile sets viewing`() {
         app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.true")!!
-        app.setActiveFile("main.true")
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        app.setActiveFile("main.cycle")
         assertEquals(agent.id, Substrate.viewingAgentId)
     }
 
@@ -281,8 +307,8 @@ class MainScreenCoreTest {
     @Test fun `stepAgentInternal advances currentStep`() {
         app.ensureMainTab()
         val tab = TabsModel.active()!!
-        tab.code = "1 = a\n2 = b\n=> stop"
-        val agent = AgentsModel.agentFor("main.true")!!
+        tab.code = "1 = a\n2 = b\n=> :stop"
+        val agent = AgentsModel.agentFor("main.cycle")!!
         val r = app.stepAgentInternal(agent.id)
         assertNotNull(r)
         assertEquals(1, r!!.currentStep)
@@ -307,12 +333,12 @@ class MainScreenCoreTest {
     @Test fun `publishActive sets active file`() {
         app.ensureMainTab()
         app.publishActive()
-        assertEquals("main.true", Substrate.activeFileName)
+        assertEquals("main.cycle", Substrate.activeFileName)
     }
 
     @Test fun `publishActive reads log from viewing agent`() {
         app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.true")!!
+        val agent = AgentsModel.agentFor("main.cycle")!!
         Substrate.viewingAgentId = agent.id
         agent.interpreter.appendLog("test line", "info")
         app.publishActive()
@@ -324,7 +350,65 @@ class MainScreenCoreTest {
     @Test fun `logFilter independent of active file`() {
         app.ensureMainTab()
         Substrate.logFilter = "error"
-        app.setActiveFile("main.true")
+        app.setActiveFile("main.cycle")
         assertEquals("error", Substrate.logFilter)
+    }
+
+    // ---------- 13. waiter auto-detection ----------
+
+    @Test fun `agent for file with result is waiter`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "a = 5\n:result"
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        assertTrue(agent.waiter)
+    }
+
+    @Test fun `agent for file without result is not waiter`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "a = 5\n=> :stop"
+        app.syncVariablesFromCode(force = true)
+        val agent = AgentsModel.agentFor("main.cycle")!!
+        assertFalse(agent.waiter)
+    }
+
+    // ---------- 14. updateCode syncs variables ----------
+
+    @Test fun `updateCode syncs variables`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = ""
+        app.updateCode("5 = a")
+        assertEquals("5", tab.interpreter.variables["a"])
+    }
+
+    @Test fun `updateCode preserves old values`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.interpreter.variables["a"] = "5"
+        app.updateCode("0 = a")
+        assertEquals("5", tab.interpreter.variables["a"])
+    }
+
+    @Test fun `updateCode renames`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "5 = a"
+        app.syncVariablesFromCode(force = true)
+        app.updateCode("5 = b")
+        assertEquals("5", tab.interpreter.variables["b"])
+        assertNull(tab.interpreter.variables["a"])
+    }
+
+    @Test fun `updateCode forceRename no rename`() {
+        app.ensureMainTab()
+        val tab = TabsModel.active()!!
+        tab.code = "5 = a"
+        app.syncVariablesFromCode(force = true)
+        app.updateCode("5 = b", forceRename = true)
+        assertEquals("5", tab.interpreter.variables["a"])
+        assertEquals("5", tab.interpreter.variables["b"])
     }
 }

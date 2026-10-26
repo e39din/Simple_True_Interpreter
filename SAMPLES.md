@@ -1,200 +1,301 @@
 # Simple True Interpreter — примеры программ
 
-Версия языка: **0.8.0**. Все функции начинаются с `:`. Результат функции — в `results['<op>']`. Копирование в `variables` — через `<op> = имя`.
+Версия языка: **0.10.0**. Все функции — с `:`. Цепочки `=>` позволяют
+сократить код. **Имя должно быть присвоено до использования** — `= name`
+(пустой контейнер) или `value = name`. Примеры работают **в середине
+цикла** — завершение (`=> :stop`) не показано.
 
 ## Алгоритмические
 
 ### 1. Сумма массива
 
-```true 
-1, 2, 3, 4, 5 => :math:sum
-math:sum = sum
-sum = result
-=> stop
+```true
+= result
+1, 2, 3, 4, 5 => :sum => result
 ```
+!! result: 15
 
 ### 2. Максимум
-```true 
-3, 7, 2, 9, 4 => :math:max
-math:max = mx
-mx = result
-=> stop
-```
-### 3. Hello, world
-```true 
-Hello, world = greeting
-greeting = result
-=> stop
-```
-### 4. Палиндром
-```true 
-racecar = s
-0 = ok
-s:x:1 = a
-s:x:7 = a2
-a == a2 ? 1 = ok
-ok = result
-=> stop
-```
-### 5. Подсчёт строк
-```true 
-0 = lineCount
-input.txt => :get
-:get = raw
-raw:l => :size
-:size = lineCount
-lineCount = result
-=> stop
-```
-### 6. Реверс строки
+
 ```true
-hello = s
-s => :size
-:size = len
-s:x:5 = c5
-s:x:4 = c4
-s:x:3 = c3
-s:x:2 = c2
-s:x:1 = c1
-c5 = r1
-c4 = r2
-c3 = r3
-c2 = r4
-c1 = r5
-result = r1
-r1 = result
-=> stop
+= result
+3, 7, 2, 9, 4 => :max => result
 ```
+!! result: 9
+
+### 3. Hello, world
+
+```true
+Hello, world = result
+```
+!! result: Hello, world
+
+### 4. Палиндром
+
+```true
+racecar = s
+s:x:1 = a
+s:x:7 = b
+= result
+a == b ? 1 = result
+```
+!! result: 1
+
+### 5. Подсчёт строк
+
+```true
+= raw
+input.txt => :get => raw
+raw:l => :size => lineCount
+```
+
+### 6. Реверс строки
+
+```true
+= result
+hello => :reverse => result
+```
+!! result: olleh
+
+### 6b. Длина через `:s`
+
+```true
+= result
+hello => :s => result
+```
+!! result: 5
+
 ## CI / ETL / embedded
 
 ### 7. Smoke test API
-```true 
-https://api.example.com/health => :get
-:get = response
-0 = ok_found
-response, ok => :data:contains => ok_found
-=> stop
+
+```true
+= response
+= ok_found
+https://api.example.com/health => :get => response
+response, ok => :contains => ok_found
+ok_found = result
 ```
+
 ### 8. embedded калькулятор
-```true 
+
+```true
 3 = a
 4 = b
-a + b * 2 => :math
-:math = result
-=> stop
+a + b * 2 => :math => result
 ```
+!! result: 11
+
 ### 9. ETL подсчёт строк в CSV
-```true 
-0 = rows
-input.csv => :get
-:get = raw
-raw:l => :size
-:size = rows
-rows = result
-=> stop
+
+```true
+= raw
+input.csv => :get => raw
+raw:l => :size => rows
 ```
+
 ## Агенты
 
-### 10. Переключение агента на другой файл
-```true 
-agent:main -> file:other
-=> stop
+### 10. Переход агента на файл
+
+```true
+^ other.cycle
 ```
-### 11. Копирование агента
-```true 
-agent:main => file:other
-=> stop
+
+### 11. Остановка агента
+
+```true
+^ :stop
 ```
+
 ### 12. Удаление агента
-```true 
-agent:main -> nothing
-=> stop
+
+```true
+^ :delete
 ```
+
 ### 13. Пауза агента
-```true 
-agent:main => pause
-=> stop
+
+```true
+^ :pause
 ```
-### 14. Статус агента
-```true 
-agent:main:status => st
-st = result
-=> stop
+
+### 14. Продолжение агента
+
+```true
+^ :resume
 ```
-### 15. Все статусы
-```true 
-agent:status => all
-all = result
-=> stop
+
+### 15. Сброс файла
+
+```true
+^ :reset
 ```
-### 16. Ожидание агента
-```true 
-100 => agent:wait
-=> stop
+
+### 16. Статус агента
+
+```true
+= result
+:agent:main:status => result
 ```
+
+### 17. Все статусы
+
+```true
+= result
+:agent:status => result
+```
+
+### 18. Ожидание агента
+
+```true
+100 => :agent:wait
+```
+
+### 19. Контейнер step
+
+```true
+= result
+step => result
+```
+
+### 20. Контейнер cycle
+
+```true
+= result
+cycle => result
+```
+
 ## Уничтожение
 
-### 17. Удаление переменной
-```true 
+### 21. Удаление контейнера
+
+```true
 a = 5
 a -> nothing
-=> stop
 ```
-### 18. Удаление файла
-```true 
-file:other -> nothing
-=> stop
+
+### 22. Удаление файла
+
+```true
+file:other.cycle -> nothing
 ```
+
 ## Данные
 
-### 19. Разбиение по оси
-```true 
+### 23. Размер по оси
+
+```true
 1, 2, 3 = arr
-arr:y => :data:length
-:data:length = len
-len = result
-=> stop
+arr:y => :size => result
 ```
-### 20. Push
-```true 
+!! result: 3
+
+### 23b. Размер через `:s`
+
+```true
+1, 2, 3 = arr
+arr:y => :s => result
+```
+!! result: 3
+
+### 24. Push
+
+```true
 1, 2 = arr
-arr:y, 3 => :data:push
-:data:push = pushed
-pushed = result
-=> stop
+arr:y, 3 => :push => result
 ```
-### 21. Splitter
-```true 
-input.csv => :get
-:get = raw
+!! result: 1,2,3
+
+### 25. Splitter
+
+```true
+= raw
+input.csv => :get => raw
 . => raw:splitter:l:;
-raw:l => :size
-:size = rows
-rows = result
-=> stop
+raw:l => :size => rows
 ```
+
+### 26. Range
+
+```true
+1, 5 => :range => result
+```
+!! result: 1,2,3,4,5
+
+### 27. Repeat
+
+```true
+0 = a
+a + 1 => a = action
+action, 5 => :repeat
+```
+
+### 28. Foreach без `.`
+
+```true
+1, 2, 3 = arr
+0 = sum
+arr:foreach:y ; n :
+sum + n => :math => sum,
+n => :log
+```
+!! sum: 6
+
+### 29. Error stack
+
+```true
+1 // 0 => :math
+:error:lines => result
+```
+!! result: 1
+
+### 30. Error handler (actions)
+
+```true
+actions = ":error ? ^ :handle\n:run"
+1 // 0 => :math
+= handle
+error => :log
+```
+(В `actions` — `:error ? ^ :handle`.)
+
 ## JSON
 
-### 22. JSON get
-```true 
+### 31. JSON get
+
+```true
 {'name':'test','value':42} = json
-json, name => :json:get
-:json:get = name_val
-name_val = result
-=> stop
+json, name => :json:get => result
 ```
-### 23. JSON names
-```true 
+!! result: test
+
+### 32. JSON names
+
+```true
 {'a':1,'b':2} = json
-json => :json:names
-:json:names = keys
-keys = result
-=> stop
+json => :json:names => result
 ```
+!! result: a,b
+
 ## Условия и переходы
 
-### 24. FizzBuzz
-```true 
+### 33. Переход на строку
+
+```true
+^ 5
+```
+
+### 34. Условие с переходом
+
+```true
+a < max ? ^ do
+```
+
+### 35. FizzBuzz (классический, через `^`/`?`)
+
+```true
+= out
 1 = i
 15 = n
 = loop
@@ -220,5 +321,17 @@ i = out
 i + 1 => :math => i
 ^ loop
 = done
-=> stop
+```
+
+### 36. FizzBuzz (короткая версия через `:range` + `foreach`)
+
+```true
+= ns
+= out
+1, 15 => :range => ns
+ns:foreach:y ; n :
+n % 15 == 0 ? FizzBuzz = out,
+n % 3 == 0 ? Fizz = out,
+n % 5 == 0 ? Buzz = out,
+n = out
 ```

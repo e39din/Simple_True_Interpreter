@@ -1,5 +1,6 @@
 package be.simple
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
@@ -26,7 +27,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -60,8 +63,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import be.`true`.Autocomplete
-import be.`true`.LogEntry
 import be.`true`.Status
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -86,7 +87,6 @@ private val BTN_BG = Color(0xFFF5F6F8)
 private val BTN_BG_DISABLED = Color(0xFFE9ECF1)
 private val BTN_FG = Color(0xFF2B364D)
 private val BTN_FG_DISABLED = Color(0xFFB0B6C1)
-private val PINNED_COLOR = Color(0xFFE1F5FE)
 private val CONST_COLOR = Color(0xFFE8D5A8)
 private val ERROR_BADGE = Color(0xFFFFCDD2)
 private val ERROR_TEXT = Color(0xFFB71C1C)
@@ -94,6 +94,9 @@ private val FINISH_COLOR = Color(0xFF2E7D32)
 private val STRICT_BADGE = Color(0xFFFFF59D)
 private val DESTROY_COLOR = Color(0xFF9C27B0)
 private val DESTROY_BG = Color(0xFFF3E5F5)
+private val MESSAGE_BG = Color(0xFFFFF3E0)
+private val MESSAGE_FG = Color(0xFF6D4C00)
+private val MESSAGE_CHIP_BG = Color(0xFFFFE0B2)
 
 private val RUNNING_BG = Color(0xFFDFF0D8)
 private val PAUSED_BG = Color(0xFFFFF3CD)
@@ -108,19 +111,7 @@ private val STRIP_WIDTH = 28.dp
 private val VALUES_MIN_WIDTH = 200.dp
 private val VALUES_MAX_WIDTH = 480.dp
 private val COLUMN_MIN_WIDTH = 320.dp
-private val COLUMN_MAX_WIDTH = 480.dp
-private val COLUMN_GUTTER = 40.dp
-
-private fun logColor(type: String): Color = when {
-    type == "error" -> Color(0xFFE55451)
-    type == "jump" -> Color(0xFF9C27B0)
-    type == "command" -> Color(0xFF2196F3)
-    type == "log" -> Color(0xFFFF9800)
-    type == "string" -> Color(0xFF4CAF50)
-    type == "destroy" -> DESTROY_COLOR
-    type.startsWith("agent:") -> TEXT
-    else -> Color(0xFF9AA1AC)
-}
+private val COLUMN_GUTTER = 8.dp
 
 private fun agentStateColor(status: Status): Color = when (status) {
     Status.RUNNING -> RUNNING_BG
@@ -154,18 +145,29 @@ fun App() {
         sys.loadLastOrMain()
         sys.startAutoSave()
         app.refreshVariables()
-        if (!Substrate.welcomeShown) Substrate.showWelcome = true
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            sys.saveSettings()
+            sys.stopAllAgents()
+            sys.stopAutoSave()
+        }
     }
 
     LaunchedEffect(Substrate.copiedValueText) {
         if (Substrate.copiedValueText != null) { delay(1200); Substrate.copiedValueText = null }
     }
+    LaunchedEffect(Substrate.copiedActionText) {
+        if (Substrate.copiedActionText != null) { delay(1200); Substrate.copiedActionText = null }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(BG).onPreviewKeyEvent { ev -> handleHotkey(ev, app) }) {
         val phi = 1.618f
         val total = maxWidth
-        val logH = maxHeight * 0.382f
+        val logH = Substrate.logHeightOverride ?: (maxHeight * 0.382f)
         val valuesW = Substrate.valuesWidthOverride ?: (total / (phi + 1)).coerceIn(VALUES_MIN_WIDTH, VALUES_MAX_WIDTH)
+        val actionsW = Substrate.actionsWidthOverride ?: (total / (phi + 1)).coerceIn(VALUES_MIN_WIDTH, VALUES_MAX_WIDTH)
 
         Column(Modifier.fillMaxSize()) {
             MenuBar(app, sys)
@@ -183,7 +185,17 @@ fun App() {
                     }
                 }
                 Column(Modifier.weight(phi).fillMaxHeight()) {
-                    CyclesArea(app, sys, Modifier.fillMaxWidth().fillMaxHeight())
+                    CyclesArea(app, sys, total, Modifier.fillMaxWidth().fillMaxHeight())
+                }
+                if (!Substrate.actionsCollapsed) {
+                    DragSplitter(vertical = true) { delta ->
+                        val current = Substrate.actionsWidthOverride ?: actionsW
+                        val next = (current + (delta / density).dp).coerceIn(VALUES_MIN_WIDTH, VALUES_MAX_WIDTH)
+                        Substrate.actionsWidthOverride = next
+                    }
+                    Box(Modifier.width(actionsW).fillMaxHeight()) { ActionsPanel(app, total) }
+                } else {
+                    Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.CenterEnd) { ActionsStrip() }
                 }
             }
             HorizontalSplitter { }
@@ -193,8 +205,6 @@ fun App() {
         }
     }
 
-    if (Substrate.showWelcome) WelcomeDialog(app, sys, onDismiss = { Substrate.showWelcome = false })
-    if (Substrate.showTutorial) TutorialDialog(app, sys, onDismiss = { Substrate.showTutorial = false })
     if (Substrate.showSettingsDialog) SettingsDialog(app, sys, onDismiss = { Substrate.showSettingsDialog = false })
     if (Substrate.showSaveStartDialog) SaveStartDialog(
         onDismiss = { Substrate.showSaveStartDialog = false },
@@ -205,10 +215,18 @@ fun App() {
     if (Substrate.showDocDialog) DocDialog(onDismiss = { Substrate.showDocDialog = false })
     if (Substrate.showSamplesDialog) SamplesDialog(app, onDismiss = { Substrate.showSamplesDialog = false })
     if (Substrate.showTemplatesDialog) TemplatesDialog(onDismiss = { Substrate.showTemplatesDialog = false })
-    if (Substrate.showCopyToDialog) CopyToDialog(app, sys, onDismiss = { Substrate.showCopyToDialog = false })
-    if (Substrate.showMoveToDialog) MoveToDialog(app, sys, onDismiss = { Substrate.showMoveToDialog = false })
-    if (Substrate.showDeleteAgentDialog) DeleteAgentDialog(app, sys, onDismiss = { Substrate.showDeleteAgentDialog = false })
     if (Substrate.showDeleteFileDialog) DeleteFileDialog(app, sys, onDismiss = { Substrate.showDeleteFileDialog = false })
+
+    if (Substrate.pendingRenameFile != null) {
+        RenameFileDialog(
+            fileName = Substrate.pendingRenameFile!!,
+            onDismiss = { Substrate.pendingRenameFile = null },
+            onConfirm = { newName ->
+                sys.renameFile(Substrate.pendingRenameFile!!, newName)
+                Substrate.pendingRenameFile = null
+            }
+        )
+    }
 
     if (Substrate.pendingNavigateFile != null) {
         val target = Substrate.pendingNavigateFile
@@ -246,9 +264,11 @@ private fun handleHotkey(ev: KeyEvent, app: MainScreenApp): Boolean {
     if (ev.type != KeyEventType.KeyDown) return false
     return when {
         ev.isCtrlPressed && ev.key == Key.Z -> { if (ev.isShiftPressed) app.redo() else app.undo(); true }
-        ev.isCtrlPressed && ev.key == Key.F -> { Substrate.showSearch = true; true }
-        ev.isCtrlPressed && ev.key == Key.H -> { Substrate.showSearch = true; true }
-        ev.isCtrlPressed && ev.key == Key.R -> { app.startPlay(); true }
+        ev.isCtrlPressed && ev.key == Key.F -> { Substrate.showSearch = true; Substrate.searchMode = "find"; true }
+        ev.isCtrlPressed && ev.key == Key.R -> { Substrate.showSearch = true; Substrate.searchMode = "replace"; true }
+        ev.isCtrlPressed && ev.key == Key.P -> { app.togglePlayPause(); true }
+        ev.isCtrlPressed && ev.key == Key.DirectionUp -> { app.stepBackAll(); true }
+        ev.isCtrlPressed && ev.key == Key.DirectionDown -> { app.stepAll(); true }
         else -> false
     }
 }
@@ -277,7 +297,8 @@ private fun MenuBar(app: MainScreenApp, sys: MainScreenSystem) {
     Row(Modifier.fillMaxWidth().height(28.dp).background(MENU_BG).padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         MenuItem("File") {
-            MenuRow("New", shortcut = "Ctrl+N") { sys.newFile() }
+            MenuRow("New Cycle", shortcut = "Ctrl+N") { sys.newFile() }
+            MenuRow("New Agent") { sys.newAgent() }
             MenuRow("Open…", shortcut = "Ctrl+O") { sys.openFileDialog()?.let { sys.openFile(it) } }
             MenuRow("Open Folder…") { sys.openFolderDialog()?.let { sys.openFolder(it) } }
             MenuSeparator()
@@ -290,20 +311,23 @@ private fun MenuBar(app: MainScreenApp, sys: MainScreenSystem) {
                 MenuRow(name) { sys.openFile(File(System.getProperty("user.home"), ".simple/$name")) }
             }
             MenuSeparator()
-            MenuRow("Exit") { sys.stopAllAgents(); sys.stopAutoSave() }
+            MenuRow("Exit") { sys.saveSettings(); sys.stopAllAgents(); sys.stopAutoSave() }
         }
         MenuItem("Run") {
-            MenuRow("Start All", shortcut = "Ctrl+R") { sys.startAllAgents() }
+            MenuRow("Start All", shortcut = "Ctrl+P") { sys.startAllAgents() }
+            MenuRow("Pause All") { sys.pauseAllAgents() }
             MenuRow("Stop All") { sys.stopAllAgents() }
             MenuSeparator()
-            MenuRow("Step") { app.step() }
-            MenuRow("Step Back") { app.stepBack() }
+            MenuRow("Step All", shortcut = "Ctrl+↓") { sys.stepAllAgents() }
+            MenuRow("Step Back All", shortcut = "Ctrl+↑") { sys.stepBackAllAgents() }
             MenuSeparator()
             MenuRow("Reset file") { app.reset() }
         }
         MenuItem("Settings") {
             MenuRow("Open Settings…") { Substrate.showSettingsDialog = true }
             MenuRow("Reset Values width") { Substrate.valuesWidthOverride = null }
+            MenuRow("Reset Actions width") { Substrate.actionsWidthOverride = null }
+            MenuRow("Reset Log height") { Substrate.logHeightOverride = null }
         }
         MenuItem("About") { MenuRow("About…") { Substrate.showAboutDialog = true } }
         Spacer(Modifier.weight(1f))
@@ -379,13 +403,229 @@ private fun MenuSeparator() {
 }
 
 @Composable
-private fun CyclesArea(app: MainScreenApp, sys: MainScreenSystem, modifier: Modifier) {
+private fun ActionsPanel(app: MainScreenApp, maxWidth: Dp) {
+    Column(
+        Modifier.fillMaxSize()
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Actions", color = TEXT, fontSize = 16.sp)
+            Spacer(Modifier.weight(1f))
+            SmallIconButton("›") { Substrate.actionsCollapsed = true }
+        }
+        if (Substrate.copiedActionText != null) {
+            Spacer(Modifier.height(4.dp))
+            Box(Modifier.fillMaxWidth().background(COPIED, RoundedCornerShape(6.dp)).padding(6.dp)) {
+                Text("Copied", color = TEXT, fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        BasicTextField(
+            value = Substrate.actionsSearchQuery,
+            onValueChange = { Substrate.actionsSearchQuery = it },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
+            textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+            decorationBox = { inner ->
+                if (Substrate.actionsSearchQuery.isEmpty()) {
+                    Text("Search actions…", color = TEXT.copy(alpha = 0.4f), fontSize = 11.sp)
+                }
+                inner()
+            }
+        )
+        Spacer(Modifier.height(6.dp))
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            val query = Substrate.actionsSearchQuery.lowercase()
+            Substrate.templateGroups.forEach { group ->
+                val filtered = group.templates.filter { t ->
+                    query.isEmpty() || t.lowercase().contains(query) || descriptionFor(t).lowercase().contains(query)
+                }
+                if (filtered.isEmpty()) return@forEach
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(4.dp).height(16.dp).background(group.color, RoundedCornerShape(2.dp)))
+                    Spacer(Modifier.width(6.dp))
+                    Text(group.title, color = TEXT, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+                Spacer(Modifier.height(2.dp))
+                filtered.forEach { template ->
+                    ActionRow(template, onCopy = {
+                        copyToClipboard(template)
+                        Substrate.copiedActionText = template
+                    }, onPin = { Substrate.pinTemplate(template) })
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(template: String, onCopy: () -> Unit, onPin: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    var flash by remember { mutableStateOf(false) }
+    LaunchedEffect(flash) { if (flash) { delay(300); flash = false } }
+    val showCopied = Substrate.copiedActionText == template
+    Column(
+        Modifier.fillMaxWidth()
+            .background(if (flash) COPIED else if (hovered) MENU_HOVER else Color.Transparent, RoundedCornerShape(4.dp))
+            .hoverable(interaction)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == PointerEventType.Press) {
+                            if (event.buttons.isSecondaryPressed) onPin()
+                            else { onCopy(); flash = true }
+                        }
+                    }
+                }
+            }
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+    ) {
+        if (showCopied) {
+            Text("Copied", color = TEXT, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        } else {
+            Text(template, color = TEXT, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        val desc = descriptionFor(template)
+        if (desc.isNotEmpty()) {
+            Text(desc, color = TEXT.copy(alpha = 0.55f), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+private fun descriptionFor(template: String): String = when {
+    template.contains("=> :math:sum") || template.contains("=> :math:min") ||
+            template.contains("=> :math:max") || template.contains("=> :math:avg") ||
+            template.contains("=> :math:product") || template.contains("=> :math:count") ||
+            template.contains("=> :math:sort") -> "Списки (числа)"
+    template.contains("=> :sum") || template.contains("=> :min") ||
+            template.contains("=> :max") || template.contains("=> :avg") ||
+            template.contains("=> :product") || template.contains("=> :count") -> "Списки (числа)"
+    template.contains("=> :math") -> "Арифметика / битовые / булевы"
+    template.contains("=> :data:substring") -> "Подстрока"
+    template.contains("=> :data:indexOf") -> "Индекс подстроки"
+    template.contains("=> :data:replace") -> "Замена подстроки"
+    template.contains("=> :data:lower") -> "В нижний регистр"
+    template.contains("=> :data:upper") -> "В верхний регистр"
+    template.contains("=> :data:trim") -> "Обрезать пробелы"
+    template.contains("=> :data:chars") -> "Разбить на символы"
+    template.contains("=> :data:charAt") -> "Символ по индексу"
+    template.contains("=> :data:size") -> "Размер по оси"
+    template.contains("=> :data:reverse") -> "Реверс"
+    template.contains("=> :data:unique") -> "Уникальные"
+    template.contains("=> :data:contains") -> "Содержит"
+    template.contains("=> :data:slice") -> "Срез"
+    template.contains("=> :data:join") -> "Склейка"
+    template.contains("=> :data:push") -> "В список (push)"
+    template.contains("=> :data:pop") -> "Из списка (pop)"
+    template.contains("=> :data:remove") -> "Удалить по индексу"
+    template.contains("=> :data:swap") -> "Поменять местами"
+    template.contains("=> :data:deleteRange") -> "Удалить диапазон"
+    template.contains("=> :data:replaceRange") -> "Заменить диапазон"
+    template.contains("=> :data:sort") -> "Сортировка"
+    template.contains("=> :push") -> "В список (push)"
+    template.contains("=> :pop") -> "Из списка (pop)"
+    template.contains("=> :size") -> "Размер по оси"
+    template.contains("=> :s") -> "Размер (кратко)"
+    template.contains("=> :sort") -> "Сортировка"
+    template.contains("=> :lower") -> "В нижний регистр"
+    template.contains("=> :upper") -> "В верхний регистр"
+    template.contains("=> :trim") -> "Обрезать пробелы"
+    template.contains("=> :reverse") -> "Реверс"
+    template.contains("=> :contains") -> "Содержит"
+    template.contains("=> :filter") -> "Фильтр"
+    template.contains("=> :matches") -> "Regex-проверка"
+    template.contains("=> :range") -> "Ряд чисел"
+    template.contains("=> :repeat") -> "Повторить действие"
+    template.contains("=> :json:get") -> "JSON: получить"
+    template.contains("=> :json:set") -> "JSON: установить"
+    template.contains("=> :json:names") -> "JSON: имена"
+    template.contains("=> :json:values") -> "JSON: значения"
+    template.contains("=> :file:data") -> "Файл: чтение/запись"
+    template.contains("=> :file:origin") -> "Файл: origin"
+    template.contains("=> :file:lines") -> "Файл: строки"
+    template.contains("=> :file:create") -> "Файл: создать"
+    template.contains("=> :file:read") -> "Файл: прочитать"
+    template.contains("=> :file:update") -> "Файл: обновить"
+    template.contains("=> :file:delete") -> "Файл: удалить"
+    template.contains("=> :file:list") -> "Файл: список"
+    template.contains("=> :file:exists") -> "Файл: существует"
+    template.contains("=> :path") -> "Путь к файлу"
+    template.contains("=> :console") -> "Команда ОС"
+    template.contains("=> :run") -> "Выполнить строку"
+    template.contains("=> :save") -> "Сохранить"
+    template.contains("=> :load") -> "Загрузить"
+    template.contains("=> :api:get") -> "API: GET"
+    template.contains("=> :api:post") -> "API: POST"
+    template.contains("=> :api:put") -> "API: PUT"
+    template.contains("=> :api:delete") -> "API: DELETE"
+    template.contains("=> :api:patch") -> "API: PATCH"
+    template.contains("=> :api:websocket") -> "API: WebSocket"
+    template.contains("=> :log") -> "Запись в лог"
+    template.contains("=> :message") -> "Пользовательское сообщение"
+    template.contains("=> :result") -> "Результат функции"
+    template.contains("=> :error") -> "Стек ошибок"
+    template.contains("=> :source:function") -> "Локальный вызов"
+    template.contains("=> :test!") -> "Асинхронный вызов вкладки"
+    template.contains("=> :test") -> "Вызов вкладки"
+    template == ":run" -> "Выполнить строку"
+    template == ":log" -> "Логировать строку"
+    template.contains("^ :stop") -> "Остановить агента"
+    template.contains("^ :pause") -> "Пауза агента"
+    template.contains("^ :resume") -> "Продолжить агента"
+    template.contains("^ :delete") -> "Удалить агента"
+    template.contains("^ :reset") -> "Сброс файла"
+    template.contains(":agent:") -> "Свойство агента"
+    template.contains(":agent:status") -> "Все статусы агентов"
+    template.contains("=> :activeTab") -> "Переключить вкладку"
+    template.contains("-> nothing") -> "Уничтожить"
+    template.contains("=> file:") -> "Копировать в файл"
+    template.contains("-> file:") -> "Переместить в файл"
+    template.contains("=> file:b") -> "Копировать файл"
+    template.contains("-> file:b") -> "Переместить файл"
+    template.contains("=> var") -> "Файл → переменная"
+    template.contains("=>|") -> "Вставка (копированием)"
+    template.contains("->|") -> "Вставка (перемещением)"
+    template.contains("^ ") -> "Переход"
+    template.contains("->") -> "Перемещение"
+    template.contains("=>") -> "Копирование / вызов"
+    template.contains("?") -> "Условие"
+    template.contains(":splitter") -> "Сплиттер оси"
+    template.contains("foreach") -> "Цикл по осям"
+    template.contains("=") -> "Именование"
+    template.startsWith("\\") -> "Литерал"
+    else -> ""
+}
+
+@Composable
+private fun ActionsStrip() {
+    Box(
+        Modifier.width(STRIP_WIDTH).fillMaxHeight()
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .clickable { Substrate.actionsCollapsed = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Text("Actions", color = TEXT, fontSize = 12.sp, maxLines = 1,
+            modifier = Modifier.rotate(90f).requiredWidth(120.dp))
+    }
+}
+
+// ---------- Cycles ----------
+
+@Composable
+private fun CyclesArea(app: MainScreenApp, sys: MainScreenSystem, maxWidth: Dp, modifier: Modifier) {
     Column(modifier.background(Color.White, RoundedCornerShape(12.dp)).padding(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Cycles", color = TEXT, fontSize = 16.sp)
             Spacer(Modifier.width(8.dp))
             ActionIconButton("▶", enabled = AgentsModel.agents.isNotEmpty()) { sys.startAllAgents() }
+            ActionIconButton("⏸", enabled = AgentsModel.agents.isNotEmpty()) { sys.pauseAllAgents() }
             ActionIconButton("⏹", enabled = AgentsModel.agents.isNotEmpty()) { sys.stopAllAgents() }
+            ActionIconButton("⏭", enabled = AgentsModel.agents.isNotEmpty()) { sys.stepAllAgents() }
+            ActionIconButton("⏮", enabled = AgentsModel.agents.isNotEmpty()) { sys.stepBackAllAgents() }
             Spacer(Modifier.weight(1f))
             if (Substrate.strictMode) {
                 Box(Modifier.background(STRICT_BADGE, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
@@ -409,32 +649,66 @@ private fun CyclesArea(app: MainScreenApp, sys: MainScreenSystem, modifier: Modi
             val tab = TabsModel.byFileName(expanded) ?: TabsModel.tabs.first()
             FileColumn(app, sys, tab, expanded = true, Modifier.fillMaxSize())
         } else {
-            CyclesFeed(app, sys)
+            CyclesGrid(app, sys, maxWidth)
         }
     }
 }
 
 @Composable
-private fun CyclesFeed(app: MainScreenApp, sys: MainScreenSystem) {
-    val scroll = rememberScrollState()
-    val tabs = TabsModel.tabs.toList()
+private fun CyclesGrid(app: MainScreenApp, sys: MainScreenSystem, maxWidth: Dp) {
+    val vScroll = rememberScrollState()
+    val hScroll = rememberScrollState()
+    val density = LocalDensity.current
+
+    val ordered = buildList {
+        for (name in Substrate.fileOrder) {
+            TabsModel.byFileName(name)?.let { add(it) }
+        }
+        for (tab in TabsModel.tabs) {
+            if (none { it.fileName == tab.fileName }) add(tab)
+        }
+    }
+    if (ordered.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("(no files)", color = TEXT.copy(alpha = 0.5f))
+        }
+        return
+    }
+
+    val colW = with(density) { COLUMN_MIN_WIDTH.toPx() + COLUMN_GUTTER.toPx() }
+    val maxW = with(density) { maxWidth.toPx() }
+    val perRow = ((maxW / colW).toInt()).coerceAtLeast(1)
+
+    val rows = ordered.chunked(perRow)
+
     Box(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxSize().horizontalScroll(scroll),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            tabs.forEach { tab ->
-                val measured = measureMaxLineWidth(tab.code)
-                val colW = measured.coerceIn(COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH)
-                Box(Modifier.width(colW).fillMaxHeight()) {
-                    FileColumn(app, sys, tab, expanded = false, Modifier.fillMaxSize())
+        Column(Modifier.fillMaxSize().verticalScroll(vScroll)) {
+            rows.forEach { row ->
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(hScroll),
+                    horizontalArrangement = Arrangement.spacedBy(COLUMN_GUTTER),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    row.forEach { tab ->
+                        val measured = measureMaxLineWidth(tab.code)
+                        val w = measured.coerceIn(COLUMN_MIN_WIDTH, maxWidth / 2)
+                        Box(Modifier.width(w).fillMaxHeight()) {
+                            FileColumn(app, sys, tab, expanded = false, Modifier.fillMaxSize())
+                        }
+                    }
                 }
+                Spacer(Modifier.height(COLUMN_GUTTER))
             }
         }
-        if (tabs.size > 1) {
+        if (rows.size > 1) {
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(vScroll),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+            )
+        }
+        if (ordered.size > perRow) {
             HorizontalScrollbar(
-                adapter = rememberScrollbarAdapter(scroll),
+                adapter = rememberScrollbarAdapter(hScroll),
                 modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(6.dp)
             )
         }
@@ -458,29 +732,20 @@ private fun FileColumn(
             .then(border)
             .padding(8.dp)
     ) {
+        // Header: имя + раскрыть
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (agent != null) {
+            if (tab.kind == FileKind.AGENT && agent != null) {
                 Box(Modifier.size(10.dp).background(agent.color, RoundedCornerShape(2.dp)))
                 Spacer(Modifier.width(6.dp))
                 Text(agent.name, color = TEXT, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false))
             } else {
-                ActionIconButton("▶") { app.createAgentFor(tab.fileName) }
-                Spacer(Modifier.width(6.dp))
-                Text("Create agent", color = ACCENT, fontSize = 11.sp)
-                Spacer(Modifier.weight(1f))
+                Text(tab.fileName, color = TEXT, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false))
             }
             Spacer(Modifier.weight(1f))
-            if (agent != null) {
-                ActionIconButton("▶", enabled = agent.status != Status.RUNNING) { sys.startAgent(agent.id) }
-                ActionIconButton("⏸", enabled = agent.status == Status.RUNNING) { sys.pauseAgent(agent.id) }
-                ActionIconButton("⏹", enabled = agent.status != Status.STOPPED) { sys.stopAgent(agent.id) }
-                ActionIconButton("⏭", enabled = agent.status != Status.RUNNING) { sys.stepAgent(agent.id) }
-                ActionIconButton("⏮", enabled = agent.status != Status.RUNNING) { sys.stepBackAgent(agent.id) }
-            }
-            ResetButton(app, sys, tab.fileName)
-            ColumnMenuButton(app, sys, tab)
             ActionIconButton(if (expanded) "⤡" else "⛶") {
                 Substrate.expandedFileName = if (expanded) null else tab.fileName
                 Substrate.activeFileName = tab.fileName
@@ -488,65 +753,73 @@ private fun FileColumn(
             }
         }
         Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+
+        // Кнопки файла — для всех
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            val idx = Substrate.fileOrder.indexOf(tab.fileName)
+            val canUp = idx > 0
+            val canDown = idx >= 0 && idx < Substrate.fileOrder.size - 1
+            ActionIconButton("⟲") { app.resetFile(tab.fileName) }
+            ActionIconButton("↑", enabled = canUp) { sys.moveFileUp(tab.fileName) }
+            ActionIconButton("↓", enabled = canDown) { sys.moveFileDown(tab.fileName) }
+            ActionIconButton("✎") {
+                Substrate.pendingRenameFile = tab.fileName
+            }
+            ActionIconButton("🗑") {
+                Substrate.pendingDeleteFile = tab.fileName
+                Substrate.showDeleteFileDialog = true
+            }
+            Spacer(Modifier.weight(1f))
             Box(
                 Modifier.height(22.dp).background(MENU_BG, RoundedCornerShape(6.dp))
                     .clickable { app.setActiveFile(tab.fileName) }
                     .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(tab.fileName, color = TEXT, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (agent != null) {
-                Spacer(Modifier.width(6.dp))
-                Text("step ${agent.currentStep}", color = TEXT.copy(alpha = 0.6f), fontSize = 10.sp)
-                Spacer(Modifier.width(4.dp))
-                Text(agentStateLabel(agent.status), color = agentStateFg(agent.status), fontSize = 10.sp)
+                Text(if (tab.kind == FileKind.AGENT) "agent" else if (tab.kind == FileKind.CYCLE) "cycle" else "file",
+                    color = TEXT.copy(alpha = 0.6f), fontSize = 10.sp)
             }
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
+
+        // Код
         Box(Modifier.fillMaxWidth().weight(1f).background(Color.White, RoundedCornerShape(6.dp)).padding(4.dp)) {
             StripedCodeField(app, tab, agent)
         }
-    }
-}
 
-@Composable
-private fun ColumnMenuButton(app: MainScreenApp, sys: MainScreenSystem, tab: TabState) {
-    var menuOpen by remember { mutableStateOf(false) }
-    var anchor by remember { mutableStateOf<Rect?>(null) }
-    val agent = AgentsModel.agentFor(tab.fileName)
-    Box {
-        Box(
-            Modifier.size(24.dp).background(BTN_BG, RoundedCornerShape(6.dp))
-                .clickable { menuOpen = !menuOpen }
-                .onGloballyPositioned { anchor = it.boundsInWindow() },
-            contentAlignment = Alignment.Center
-        ) { Text("⋯", color = BTN_FG, fontSize = 14.sp) }
-        if (menuOpen) {
-            Popup(popupPositionProvider = AnchorBelowProvider(anchor),
-                onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = true)) {
-                Column(Modifier.width(240.dp).background(Color.White, RoundedCornerShape(6.dp))
-                    .border(1.dp, MENU_SEPARATOR, RoundedCornerShape(6.dp)).padding(bottom = 2.dp)) {
-                    if (agent != null) {
-                        MenuRow("Templates…") { menuOpen = false; Substrate.showTemplatesDialog = true }
-                        MenuRow("Copy to…") { menuOpen = false; Substrate.showCopyToDialog = true }
-                        MenuRow("Move to…") { menuOpen = false; Substrate.showMoveToDialog = true }
-                        MenuSeparator()
-                        MenuRow("Delete agent") {
-                            menuOpen = false
-                            Substrate.pendingDeleteAgentId = agent.id
-                            Substrate.showDeleteAgentDialog = true
-                        }
-                    } else {
-                        MenuRow("Create agent") { menuOpen = false; app.createAgentFor(tab.fileName) }
-                    }
-                    MenuSeparator()
-                    MenuRow("Delete file") {
-                        menuOpen = false
-                        Substrate.pendingDeleteFile = tab.fileName
-                        Substrate.showDeleteFileDialog = true
+        // Кнопки агента — только для .agent (снизу)
+        if (tab.kind == FileKind.AGENT && agent != null) {
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                ActionIconButton("▶", enabled = agent.status != Status.RUNNING,
+                    highlighted = agent.lastPressed == "play") {
+                    sys.startAgent(agent.id); agent.lastPressed = "play"
+                }
+                ActionIconButton("⏸", enabled = agent.status == Status.RUNNING,
+                    highlighted = agent.lastPressed == "pause") {
+                    sys.pauseAgent(agent.id); agent.lastPressed = "pause"
+                }
+                ActionIconButton("⏹", enabled = true,
+                    highlighted = agent.lastPressed == "stop") {
+                    sys.stopAgent(agent.id); agent.lastPressed = "stop"
+                }
+                ActionIconButton("⏭", enabled = agent.status != Status.RUNNING,
+                    highlighted = false) {
+                    sys.stepAgent(agent.id)
+                }
+                ActionIconButton("⏮", enabled = agent.status != Status.RUNNING,
+                    highlighted = false) {
+                    sys.stepBackAgent(agent.id)
+                }
+                Spacer(Modifier.weight(1f))
+                Text("step ${agent.currentStep}", color = TEXT.copy(alpha = 0.6f), fontSize = 10.sp)
+                Spacer(Modifier.width(4.dp))
+                Text(agentStateLabel(agent.status), color = agentStateFg(agent.status), fontSize = 10.sp)
+                if (agent.waiter) {
+                    Spacer(Modifier.width(4.dp))
+                    Box(Modifier.background(Color(0xFFE3F2FD), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)) {
+                        Text("waiter", color = Color(0xFF1565C0), fontSize = 9.sp)
                     }
                 }
             }
@@ -594,15 +867,15 @@ private fun FileChip(tab: TabState, active: Boolean, onSelect: () -> Unit, onClo
     val text = tab.fileName
     val style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     val measuredWidth = with(density) { measurer.measure(text, style).size.width.toDp() }
-    val dotW = if (agent != null) 10.dp else 0.dp
+    val dotW = if (tab.kind == FileKind.AGENT) 10.dp else 0.dp
     val chipWidth = (measuredWidth + dotW + CHIP_PADDING_H * 2 + CLOSE_BTN_WIDTH).coerceAtLeast(CHIP_MIN_WIDTH)
 
     val bg = when {
         active -> ACCENT
-        agent?.status == Status.RUNNING -> FINISH_COLOR
+        tab.kind == FileKind.AGENT && agent?.status == Status.RUNNING -> FINISH_COLOR
         else -> MENU_BG
     }
-    val fg = if (active || agent?.status == Status.RUNNING) Color.White else TEXT
+    val fg = if (active || (tab.kind == FileKind.AGENT && agent?.status == Status.RUNNING)) Color.White else TEXT
 
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -615,131 +888,20 @@ private fun FileChip(tab: TabState, active: Boolean, onSelect: () -> Unit, onClo
             .padding(start = 6.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (agent != null) {
+        if (tab.kind == FileKind.AGENT && agent != null) {
             val dotAlpha = if (agent.status == Status.STOPPED) 0.5f else 1f
             Box(Modifier.size(8.dp).background(agent.color.copy(alpha = dotAlpha), CircleShape))
             Spacer(Modifier.width(6.dp))
         }
         Text(text, color = fg, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        if (agent?.waiter == true) {
+            Spacer(Modifier.width(2.dp))
+            Text("W", color = fg.copy(alpha = 0.75f), fontSize = 9.sp)
+        }
         Spacer(Modifier.width(2.dp))
         Box(Modifier.size(CLOSE_BTN_WIDTH).clickable { onClose() }, contentAlignment = Alignment.Center) {
             Text("×", color = fg.copy(alpha = 0.75f), fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-private fun ResetButton(app: MainScreenApp, sys: MainScreenSystem, fileName: String) {
-    var menuOpen by remember { mutableStateOf(false) }
-    var anchor by remember { mutableStateOf<Rect?>(null) }
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    Box {
-        Box(
-            Modifier.size(24.dp).background(if (hovered) MENU_HOVER else BTN_BG, RoundedCornerShape(6.dp))
-                .hoverable(interaction)
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (event.type == PointerEventType.Press) {
-                                if (event.buttons.isSecondaryPressed) menuOpen = true
-                                else app.resetFile(fileName)
-                            }
-                        }
-                    }
-                }
-                .onGloballyPositioned { anchor = it.boundsInWindow() },
-            contentAlignment = Alignment.Center
-        ) { Text("⟲", color = BTN_FG, fontSize = 12.sp) }
-        if (menuOpen) {
-            Popup(popupPositionProvider = AnchorBelowProvider(anchor),
-                onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = true)) {
-                Column(Modifier.width(280.dp).background(Color.White, RoundedCornerShape(6.dp))
-                    .border(1.dp, MENU_SEPARATOR, RoundedCornerShape(6.dp)).padding(bottom = 2.dp)) {
-                    MenuRow("Save current as start state…") {
-                        menuOpen = false
-                        Substrate.showSaveStartDialog = true
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StripedCodeField(app: MainScreenApp, tab: TabState, agent: AgentState?) {
-    var tfv by remember(tab.id) { mutableStateOf(TextFieldValue(tab.code, TextRange(tab.cursorPosition))) }
-    var showSuggest by remember { mutableStateOf(false) }
-    var suggestions by remember { mutableStateOf(emptyList<String>()) }
-    var suggestionAnchor by remember { mutableStateOf<Rect?>(null) }
-    LaunchedEffect(tab.code) {
-        if (tfv.text != tab.code) {
-            val pos = tab.cursorPosition.coerceIn(0, tab.code.length)
-            tfv = tfv.copy(text = tab.code, selection = TextRange(pos))
-        }
-    }
-    val currentLine = if (agent != null && agent.id == Substrate.viewingAgentId) agent.currentStep else -1
-    val statusColor = if (agent != null && agent.id == Substrate.viewingAgentId) agentStateColor(agent.status) else Color.Transparent
-    val agentColor = if (agent != null && agent.id == Substrate.viewingAgentId) agent.color else null
-    val statusLabel = if (agent != null && agent.id == Substrate.viewingAgentId) agentStateLabel(agent.status) else null
-    val transformation = remember(currentLine, statusColor, agentColor, statusLabel) {
-        LineHighlighter(currentLine, statusColor, agentColor, statusLabel)
-    }
-    Box {
-        BasicTextField(
-            value = tfv,
-            onValueChange = { nv -> tfv = nv; app.updateCode(nv.text); app.updateCursor(nv.selection.start) },
-            modifier = Modifier.fillMaxSize()
-                .onGloballyPositioned { suggestionAnchor = it.boundsInWindow() }
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.Tab) {
-                        val pos = tfv.selection.start
-                        val newText = tfv.text.substring(0, pos) + "  " + tfv.text.substring(pos)
-                        tfv = tfv.copy(text = newText, selection = TextRange(pos + 2))
-                        app.updateCode(newText); app.updateCursor(pos + 2); return@onPreviewKeyEvent true
-                    }
-                    if (ev.type == KeyEventType.KeyDown && ev.isCtrlPressed && ev.key == Key.Spacebar) {
-                        val pos = tfv.selection.start
-                        val prefix = tfv.text.substring(0, pos).takeLastWhile { !it.isWhitespace() }
-                        val list = Autocomplete.suggestions(prefix)
-                        if (list.isNotEmpty()) { suggestions = list; showSuggest = true; return@onPreviewKeyEvent true }
-                    }
-                    if (showSuggest && ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) {
-                        showSuggest = false; return@onPreviewKeyEvent true
-                    }
-                    if (showSuggest && ev.type == KeyEventType.KeyDown && ev.key == Key.Enter) {
-                        val pick = suggestions.firstOrNull() ?: return@onPreviewKeyEvent false
-                        val pos = tfv.selection.start
-                        val prefix = tfv.text.substring(0, pos).takeLastWhile { !it.isWhitespace() }
-                        val newText = tfv.text.substring(0, pos - prefix.length) + pick + tfv.text.substring(pos)
-                        tfv = tfv.copy(text = newText, selection = TextRange(pos - prefix.length + pick.length))
-                        app.updateCode(newText); app.updateCursor(pos - prefix.length + pick.length)
-                        showSuggest = false; return@onPreviewKeyEvent true
-                    }
-                    false
-                },
-            textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-            visualTransformation = transformation
-        )
-        if (showSuggest) {
-            Popup(popupPositionProvider = AnchorBelowProvider(suggestionAnchor),
-                onDismissRequest = { showSuggest = false }, properties = PopupProperties(focusable = true)) {
-                Column(Modifier.width(240.dp).background(Color.White, RoundedCornerShape(6.dp))
-                    .border(1.dp, MENU_SEPARATOR, RoundedCornerShape(6.dp)).padding(4.dp)) {
-                    suggestions.take(8).forEach { s ->
-                        MenuRow(s) {
-                            val pos = tfv.selection.start
-                            val prefix = tfv.text.substring(0, pos).takeLastWhile { !it.isWhitespace() }
-                            val newText = tfv.text.substring(0, pos - prefix.length) + s + tfv.text.substring(pos)
-                            tfv = tfv.copy(text = newText, selection = TextRange(pos - prefix.length + s.length))
-                            app.updateCode(newText); app.updateCursor(pos - prefix.length + s.length)
-                            showSuggest = false
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -752,7 +914,71 @@ private fun measureMaxLineWidth(code: String): Dp {
     return remember(code) {
         val maxLine = code.lines().maxByOrNull { it.length } ?: ""
         val w = with(density) { measurer.measure(maxLine, style).size.width.toDp() }
-        (w + COLUMN_GUTTER).coerceIn(COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH)
+        w + COLUMN_GUTTER
+    }
+}
+
+// ---------- Code editor ----------
+
+@Composable
+private fun StripedCodeField(app: MainScreenApp, tab: TabState, agent: AgentState?) {
+    var tfv by remember(tab.id) { mutableStateOf(TextFieldValue(tab.code, TextRange(tab.cursorPosition))) }
+    var ctrlHeld by remember { mutableStateOf(false) }
+    LaunchedEffect(tab.code) {
+        if (tfv.text != tab.code) {
+            val pos = tab.cursorPosition.coerceIn(0, tab.code.length)
+            tfv = tfv.copy(text = tab.code, selection = TextRange(pos))
+        }
+    }
+    val currentLine = if (agent != null && agent.id == Substrate.viewingAgentId) agent.currentStep else -1
+    val statusColor = if (agent != null && agent.id == Substrate.viewingAgentId) agentStateColor(agent.status) else Color.Transparent
+    val agentColor = if (agent != null && agent.id == Substrate.viewingAgentId) agent.color else null
+    val transformation = remember(currentLine, statusColor, agentColor, Substrate.searchMatches, Substrate.searchCurrent) {
+        LineHighlighter(currentLine, statusColor, agentColor, Substrate.searchMatches, Substrate.searchCurrent)
+    }
+    Box(Modifier.fillMaxSize()) {
+        CurrentLineBackground(
+            currentLine = currentLine,
+            statusColor = statusColor,
+            code = tab.code
+        )
+        SelectionContainer {
+            BasicTextField(
+                value = tfv,
+                onValueChange = { nv ->
+                    tfv = nv
+                    app.updateCode(nv.text, forceRename = ctrlHeld)
+                    app.updateCursor(nv.selection.start)
+                },
+                modifier = Modifier.fillMaxSize()
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.Tab) {
+                            val pos = tfv.selection.start
+                            val newText = tfv.text.substring(0, pos) + "  " + tfv.text.substring(pos)
+                            tfv = tfv.copy(text = newText, selection = TextRange(pos + 2))
+                            app.updateCode(newText, forceRename = ctrlHeld); app.updateCursor(pos + 2)
+                            return@onPreviewKeyEvent true
+                        }
+                        if (ev.key == Key.CtrlLeft || ev.key == Key.CtrlRight) {
+                            ctrlHeld = ev.type == KeyEventType.KeyDown
+                        }
+                        false
+                    },
+                textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                visualTransformation = transformation
+            )
+        }
+    }
+}
+
+@Composable
+private fun CurrentLineBackground(currentLine: Int, statusColor: Color, code: String) {
+    if (currentLine <= 0) return
+    Canvas(Modifier.fillMaxSize()) {
+        val lineHeightPx = 16.sp.toPx() * 1.0f
+        val top = (currentLine - 1) * lineHeightPx
+        val color = if (statusColor != Color.Transparent) statusColor else Color(0x224A90E2)
+        drawRect(color = color, topLeft = Offset(0f, top), size = Size(size.width, lineHeightPx))
     }
 }
 
@@ -760,15 +986,17 @@ private class LineHighlighter(
     private val currentLine: Int,
     private val statusColor: Color,
     private val agentColor: Color?,
-    private val statusLabel: String?
+    private val searchMatches: List<Int>,
+    private val searchCurrent: Int
 ) : VisualTransformation {
 
     private var lastCode: String? = null
     private var lastLine: Int = -1
     private var lastStatusColor: Color? = null
     private var lastAgentColor: Color? = null
-    private var lastStatusLabel: String? = null
     private var lastErrors: Set<Int> = emptySet()
+    private var lastSearch: List<Int> = emptyList()
+    private var lastSearchCurrent: Int = -1
     private var cached: AnnotatedString? = null
     private var cachedMapping: OffsetMapping? = null
 
@@ -777,7 +1005,8 @@ private class LineHighlighter(
         val errorLines = Substrate.errorLines
 
         if (code == lastCode && currentLine == lastLine && errorLines == lastErrors &&
-            statusColor == lastStatusColor && agentColor == lastAgentColor && statusLabel == lastStatusLabel &&
+            statusColor == lastStatusColor && agentColor == lastAgentColor &&
+            searchMatches == lastSearch && searchCurrent == lastSearchCurrent &&
             cached != null && cachedMapping != null) {
             return TransformedText(cached!!, cachedMapping!!)
         }
@@ -798,15 +1027,16 @@ private class LineHighlighter(
                 addStyle(SpanStyle(color = if (idx + 1 == currentLine) ACCENT else LINE_NUM), numStart, numEnd)
                 if (idx + 1 == currentLine) addStyle(SpanStyle(fontWeight = FontWeight.Bold), numStart, numEnd)
 
-                val bg = when {
-                    idx + 1 == currentLine && statusColor != Color.Transparent -> statusColor
-                    idx % 2 == 1 -> ZEBRA
-                    else -> Color.Transparent
-                }
-                if (bg != Color.Transparent) addStyle(SpanStyle(background = bg), numStart, textEnd)
+                if (idx % 2 == 1) addStyle(SpanStyle(background = ZEBRA), numStart, textEnd)
 
                 if (idx + 1 in errorLines) {
                     addStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = ERROR_TEXT), numStart, textEnd)
+                }
+
+                val lineMatch = searchMatches.contains(idx + 1)
+                if (lineMatch) {
+                    val bg = if (searchCurrent == idx + 1) Color(0xFFFFCC80) else Color(0xFFFFF59D)
+                    addStyle(SpanStyle(background = bg), numStart, textEnd)
                 }
 
                 val destroyMatch = Regex("->\\s*nothing").findAll(line)
@@ -844,19 +1074,23 @@ private class LineHighlighter(
         }
 
         lastCode = code; lastLine = currentLine; lastErrors = errorLines
-        lastStatusColor = statusColor; lastAgentColor = agentColor; lastStatusLabel = statusLabel
+        lastStatusColor = statusColor; lastAgentColor = agentColor
+        lastSearch = searchMatches; lastSearchCurrent = searchCurrent
         cached = annotated; cachedMapping = mapping
         return TransformedText(annotated, mapping)
     }
 }
 
+// ---------- Buttons ----------
+
 @Composable
-private fun ActionIconButton(glyph: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun ActionIconButton(glyph: String, enabled: Boolean = true, highlighted: Boolean = false, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val bg = when { !enabled -> BTN_BG_DISABLED; hovered -> MENU_HOVER; else -> BTN_BG }
     val fg = if (enabled) BTN_FG else BTN_FG_DISABLED
-    Box(Modifier.size(24.dp).background(bg, RoundedCornerShape(6.dp))
+    val borderMod = if (highlighted) Modifier.border(2.dp, ACCENT, RoundedCornerShape(6.dp)) else Modifier
+    Box(Modifier.size(24.dp).background(bg, RoundedCornerShape(6.dp)).then(borderMod)
         .hoverable(interaction).clickable(enabled = enabled) { onClick() }, contentAlignment = Alignment.Center) {
         Text(glyph, color = fg, fontSize = 12.sp)
     }
@@ -871,6 +1105,13 @@ private fun SmallIconButton(glyph: String, onClick: () -> Unit) {
         Text(glyph, color = BTN_FG, fontSize = 12.sp)
     }
 }
+
+@Composable
+private fun ActionButton(label: String, onClick: () -> Unit) {
+    Button(onClick = onClick) { Text(label, color = Color.White, fontSize = 12.sp) }
+}
+
+// ---------- Values Panel ----------
 
 @Composable
 private fun ValuesPanel(app: MainScreenApp) {
@@ -900,7 +1141,7 @@ private fun ValuesPanel(app: MainScreenApp) {
                 val hidden = agent.variablesSnapshot.filterKeys { it in agent.hiddenSnapshot }
                 var rowIndex = 0
                 if (vars.isEmpty() && hidden.isEmpty() && agent.resultsSnapshot.isEmpty()) {
-                    Text("(no variables)", color = TEXT.copy(alpha = 0.5f))
+                    Text("(no containers)", color = TEXT.copy(alpha = 0.5f))
                 }
                 vars.forEach { (k, v) ->
                     val isConst = k in agent.constantsSnapshot
@@ -983,6 +1224,8 @@ private fun valuesAsText(agent: AgentState?): String {
     return sb.toString()
 }
 
+// ---------- Log Panel ----------
+
 @Composable
 private fun LogPanel(modifier: Modifier) {
     Column(modifier.background(Color.White, RoundedCornerShape(12.dp)).padding(16.dp)) {
@@ -1005,7 +1248,7 @@ private fun LogFilterBar() {
     val filters = listOf(
         "All" to "All", "Errors" to "error", "Agents" to "agent",
         "Jumps" to "jump", "Commands" to "command", "Steps" to "step",
-        "Strings" to "string", "Destroy" to "destroy"
+        "Strings" to "string", "Messages" to "message", "Destroy" to "destroy"
     )
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1022,20 +1265,25 @@ private fun LogFilterChip(label: String, type: String) {
     else Substrate.logCount(type)
     val isError = type == "error"
     val isDestroy = type == "destroy"
+    val isMessage = type == "message"
     val bg = when {
         selected && isError -> ERROR_BADGE
         selected && isDestroy -> DESTROY_BG
+        selected && isMessage -> MESSAGE_CHIP_BG
         selected -> ACCENT
         isError && count > 0 -> ERROR_BADGE.copy(alpha = 0.5f)
         isDestroy && count > 0 -> DESTROY_BG.copy(alpha = 0.5f)
+        isMessage && count > 0 -> MESSAGE_CHIP_BG.copy(alpha = 0.5f)
         else -> MENU_BG
     }
     val fg = when {
         selected && isError -> ERROR_TEXT
         selected && isDestroy -> DESTROY_COLOR
+        selected && isMessage -> MESSAGE_FG
         selected -> Color.White
         isError && count > 0 -> ERROR_TEXT
         isDestroy && count > 0 -> DESTROY_COLOR
+        isMessage && count > 0 -> MESSAGE_FG
         else -> TEXT
     }
     Row(Modifier.height(22.dp).background(bg, RoundedCornerShape(6.dp))
@@ -1071,9 +1319,10 @@ private fun LogList(modifier: Modifier) {
 }
 
 @Composable
-private fun LogRow(entry: LogEntry, idx: Int) {
+private fun LogRow(entry: be.`true`.LogEntry, idx: Int) {
     val isError = entry.type == "error"
     val isDestroy = entry.type == "destroy"
+    val isMessage = entry.type == "message"
     val isFinish = entry.text.startsWith("✓")
     val isAgent = entry.type.startsWith("agent:")
     val agentName = if (isAgent) entry.type.removePrefix("agent:") else null
@@ -1082,6 +1331,7 @@ private fun LogRow(entry: LogEntry, idx: Int) {
     val bg = when {
         isError -> ERROR_BADGE
         isDestroy -> DESTROY_BG
+        isMessage -> MESSAGE_BG
         idx == 0 -> Color(0xFFE6F4EA)
         idx % 2 == 1 -> ZEBRA
         else -> Color.Transparent
@@ -1089,6 +1339,7 @@ private fun LogRow(entry: LogEntry, idx: Int) {
     val fg = when {
         isError -> ERROR_TEXT
         isDestroy -> DESTROY_COLOR
+        isMessage -> MESSAGE_FG
         isFinish -> FINISH_COLOR
         else -> TEXT
     }
@@ -1103,113 +1354,116 @@ private fun LogRow(entry: LogEntry, idx: Int) {
     }
 }
 
-private fun copyToClipboard(text: String) {
-    try { val sel = StringSelection(text); Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel) }
-    catch (e: Exception) { Substrate.log("Copy failed: ${e.message}") }
-}
+// ---------- Search Dialog ----------
 
 @Composable
-private fun TemplatesDialog(onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(640.dp).heightIn(max = 640.dp).padding(16.dp)) {
-                Text("Templates", color = TEXT, fontSize = 16.sp)
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.weight(1f)) { TemplatesEditor() }
-                Spacer(Modifier.height(8.dp))
-                ActionButton("Close") { onDismiss() }
+private fun SearchDialog(app: MainScreenApp, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf(Substrate.searchQuery) }
+    var replace by remember { mutableStateOf(Substrate.replaceQuery) }
+    val isReplace = Substrate.searchMode == "replace"
+
+    fun findAll() {
+        val code = TabsModel.active()?.code ?: ""
+        val list = mutableListOf<Int>()
+        if (query.isNotEmpty()) {
+            var idx = code.indexOf(query)
+            while (idx >= 0) {
+                val line = code.substring(0, idx).count { it == '\n' } + 1
+                if (line !in list) list += line
+                idx = code.indexOf(query, idx + 1)
             }
         }
+        Substrate.searchMatches = list
+        Substrate.searchCurrent = 0
     }
-}
 
-@Composable
-private fun CopyToDialog(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
-    val agent = app.viewingAgent()
-    if (agent == null) { LaunchedEffect(Unit) { onDismiss() }; return }
-    val candidates = TabsModel.tabs.filter { it.fileName != agent.fileName && AgentsModel.agentFor(it.fileName) == null }
-    var selected by remember { mutableStateOf(candidates.firstOrNull()?.fileName) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(400.dp).padding(16.dp)) {
-                Text("Copy ${agent.name} to file:", color = TEXT, fontSize = 14.sp)
+            Column(Modifier.width(520.dp).padding(16.dp)) {
+                Text(if (isReplace) "Find / Replace" else "Find", color = TEXT, fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
-                if (candidates.isEmpty()) Text("(no free files)", color = TEXT.copy(alpha = 0.5f), fontSize = 12.sp)
-                else Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                    candidates.forEach { tab ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                            .background(if (selected == tab.fileName) MENU_SELECTED else Color.Transparent, RoundedCornerShape(4.dp))
-                            .clickable { selected = tab.fileName }.padding(8.dp)) {
-                            Text(tab.fileName, color = TEXT, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                        }
-                    }
+                BasicTextField(query, { query = it; Substrate.searchQuery = it }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
+                    textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
+                if (isReplace) {
+                    Spacer(Modifier.height(6.dp))
+                    BasicTextField(replace, { replace = it; Substrate.replaceQuery = it }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
+                        textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ActionButton("Copy") {
-                        val target = selected
-                        if (target != null) sys.copyAgentTo(agent.id, target)
-                        onDismiss()
+                    ActionButton("Find all") { findAll() }
+                    ActionButton("◀") {
+                        if (Substrate.searchCurrent > 0) Substrate.searchCurrent--
                     }
-                    ActionButton("Cancel") { onDismiss() }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MoveToDialog(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
-    val agent = app.viewingAgent()
-    if (agent == null) { LaunchedEffect(Unit) { onDismiss() }; return }
-    val candidates = TabsModel.tabs.filter { it.fileName != agent.fileName && AgentsModel.agentFor(it.fileName) == null }
-    var selected by remember { mutableStateOf(candidates.firstOrNull()?.fileName) }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(400.dp).padding(16.dp)) {
-                Text("Move ${agent.name} to file:", color = TEXT, fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                if (candidates.isEmpty()) Text("(no free files)", color = TEXT.copy(alpha = 0.5f), fontSize = 12.sp)
-                else Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                    candidates.forEach { tab ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                            .background(if (selected == tab.fileName) MENU_SELECTED else Color.Transparent, RoundedCornerShape(4.dp))
-                            .clickable { selected = tab.fileName }.padding(8.dp)) {
-                            Text(tab.fileName, color = TEXT, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    ActionButton("▶") {
+                        if (Substrate.searchCurrent < Substrate.searchMatches.size - 1) Substrate.searchCurrent++
+                    }
+                    if (isReplace) {
+                        ActionButton("Replace") {
+                            val tab = TabsModel.active() ?: return@ActionButton
+                            if (query.isBlank()) return@ActionButton
+                            val idx = Substrate.searchMatches.getOrNull(Substrate.searchCurrent) ?: return@ActionButton
+                            val lines = tab.code.lines().toMutableList()
+                            if (idx - 1 in lines.indices) {
+                                lines[idx - 1] = lines[idx - 1].replace(query, replace)
+                                tab.code = lines.joinToString("\n")
+                                tab.dirty = true
+                                app.updateCode(tab.code, forceRename = true)
+                            }
+                            findAll()
+                        }
+                        ActionButton("Replace all") {
+                            val tab = TabsModel.active() ?: return@ActionButton
+                            if (query.isBlank()) return@ActionButton
+                            tab.code = tab.code.replace(query, replace)
+                            tab.dirty = true
+                            app.updateCode(tab.code, forceRename = true)
+                            findAll()
                         }
                     }
+                    ActionButton("Close") { onDismiss() }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ActionButton("Move") {
-                        val target = selected
-                        if (target != null) sys.moveAgentTo(agent.id, target)
-                        onDismiss()
-                    }
-                    ActionButton("Cancel") { onDismiss() }
+                if (Substrate.searchMatches.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("${Substrate.searchCurrent + 1} of ${Substrate.searchMatches.size}",
+                        color = TEXT.copy(alpha = 0.6f), fontSize = 11.sp)
                 }
             }
         }
     }
 }
 
+// ---------- Misc dialogs ----------
+
 @Composable
-private fun DeleteAgentDialog(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
-    val id = Substrate.pendingDeleteAgentId
-    val agent = id?.let { AgentsModel.byId(it) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Delete agent?", color = TEXT) },
-        text = { Text("Удалить ${agent?.name ?: "агента"}? Состояние будет потеряно.", color = TEXT) },
-        confirmButton = {
-            ActionButton("Delete") {
-                if (id != null) sys.deleteAgent(id)
-                Substrate.pendingDeleteAgentId = null
-                onDismiss()
+private fun SaveStartDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("Save as start state?", color = TEXT) },
+        text = { Text("This will replace the current start state with the current code. Continue?", color = TEXT) },
+        confirmButton = { ActionButton("Save as start") { onConfirm() } },
+        dismissButton = { ActionButton("Cancel") { onDismiss() } })
+}
+
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("About Simple True Interpreter", color = TEXT) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Version: ${Substrate.version} (${Substrate.platform})", color = TEXT, fontSize = 12.sp)
+                Text("Language: ${Substrate.languageVersion}", color = TEXT, fontSize = 12.sp)
+                Text("Developed by Александр Кундрюков", color = TEXT, fontSize = 12.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("Links:", color = TEXT, fontSize = 12.sp)
+                Text("README: ${Substrate.GITHUB_README_URL}", color = ACCENT, fontSize = 11.sp)
+                Text("Email: a.kundryukov@gmail.com", color = ACCENT, fontSize = 11.sp)
+                Text("Telegram: @e16din", color = ACCENT, fontSize = 11.sp)
+                Text("MAX: ${Substrate.MAX_URL}", color = ACCENT, fontSize = 11.sp)
             }
         },
-        dismissButton = { ActionButton("Cancel") { Substrate.pendingDeleteAgentId = null; onDismiss() } }
-    )
+        confirmButton = { ActionButton("Close") { onDismiss() } })
 }
 
 @Composable
@@ -1258,25 +1512,15 @@ private fun NavigateBehaviorDialog(
 }
 
 @Composable
-private fun TabsPicker(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
+private fun DocDialog(onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(600.dp).heightIn(max = 640.dp).padding(16.dp)) {
-                Text("Open", color = TEXT, fontSize = 16.sp)
+            Column(Modifier.width(800.dp).heightIn(max = 700.dp).padding(16.dp)) {
+                Text(Substrate.docTitle, color = TEXT, fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ActionButton("New") { app.newTab(); onDismiss() }
-                    ActionButton("Open File…") { sys.openFileDialog()?.let { sys.openFile(it) }; onDismiss() }
-                    ActionButton("Open Folder…") { sys.openFolderDialog()?.let { sys.openFolder(it) }; onDismiss() }
-                }
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MENU_SEPARATOR))
-                Spacer(Modifier.height(8.dp))
-                Text("Recent", color = TEXT.copy(alpha = 0.6f), fontSize = 11.sp)
-                Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                    if (Substrate.recentFiles.isEmpty()) MenuRowDisabled("(empty)")
-                    else Substrate.recentFiles.forEach { name ->
-                        MenuRow(name) { sys.openFile(File(System.getProperty("user.home"), ".simple/$name")); onDismiss() }
+                SelectionContainer {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        Text(Substrate.docContent, color = TEXT, fontSize = 12.sp, lineHeight = 18.sp)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -1319,63 +1563,43 @@ private fun SamplesDialog(app: MainScreenApp, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun SearchDialog(app: MainScreenApp, onDismiss: () -> Unit) {
-    var query by remember { mutableStateOf("") }
-    var replace by remember { mutableStateOf("") }
-    var matches by remember { mutableStateOf<List<Int>>(emptyList()) }
-    var cursor by remember { mutableStateOf(0) }
+private fun TabsPicker(app: MainScreenApp, sys: MainScreenSystem, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(520.dp).padding(16.dp)) {
-                Text("Find / Replace", color = TEXT, fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                BasicTextField(query, { query = it }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
-                    textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
-                Spacer(Modifier.height(6.dp))
-                BasicTextField(replace, { replace = it }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
-                    textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
+            Column(Modifier.width(600.dp).heightIn(max = 640.dp).padding(16.dp)) {
+                Text("Open", color = TEXT, fontSize = 16.sp)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ActionButton("Find all") {
-                        val code = TabsModel.active()?.code ?: ""
-                        val list = mutableListOf<Int>()
-                        var idx = code.indexOf(query)
-                        while (idx >= 0) { list += idx; idx = code.indexOf(query, idx + 1) }
-                        matches = list; cursor = 0
-                    }
-                    ActionButton("◀") { if (cursor > 0) cursor-- }
-                    ActionButton("▶") { if (cursor < matches.size - 1) cursor++ }
-                    ActionButton("Replace all") {
-                        val tab = TabsModel.active() ?: return@ActionButton
-                        if (query.isBlank()) return@ActionButton
-                        tab.code = tab.code.replace(query, replace)
-                        tab.dirty = true; app.publishActive()
-                    }
-                    ActionButton("Close") { onDismiss() }
+                    ActionButton("New Cycle") { app.newTab(); onDismiss() }
+                    ActionButton("New Agent") { app.newAgentTab(); onDismiss() }
+                    ActionButton("Open File…") { sys.openFileDialog()?.let { sys.openFile(it) }; onDismiss() }
+                    ActionButton("Open Folder…") { sys.openFolderDialog()?.let { sys.openFolder(it) }; onDismiss() }
                 }
-                if (matches.isNotEmpty()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("${cursor + 1} of ${matches.size}", color = TEXT.copy(alpha = 0.6f), fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MENU_SEPARATOR))
+                Spacer(Modifier.height(8.dp))
+                Text("Recent", color = TEXT.copy(alpha = 0.6f), fontSize = 11.sp)
+                Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                    if (Substrate.recentFiles.isEmpty()) MenuRowDisabled("(empty)")
+                    else Substrate.recentFiles.forEach { name ->
+                        MenuRow(name) { sys.openFile(File(System.getProperty("user.home"), ".simple/$name")); onDismiss() }
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
+                ActionButton("Close") { onDismiss() }
             }
         }
     }
 }
 
 @Composable
-private fun DocDialog(onDismiss: () -> Unit) {
+private fun TemplatesDialog(onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
-            Column(Modifier.width(800.dp).heightIn(max = 700.dp).padding(16.dp)) {
-                Text(Substrate.docTitle, color = TEXT, fontSize = 14.sp)
+            Column(Modifier.width(640.dp).heightIn(max = 640.dp).padding(16.dp)) {
+                Text("Templates", color = TEXT, fontSize = 16.sp)
                 Spacer(Modifier.height(8.dp))
-                SelectionContainer {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        Text(Substrate.docContent, color = TEXT, fontSize = 12.sp, lineHeight = 18.sp)
-                    }
-                }
+                Box(Modifier.weight(1f)) { TemplatesEditor() }
                 Spacer(Modifier.height(8.dp))
                 ActionButton("Close") { onDismiss() }
             }
@@ -1442,6 +1666,27 @@ private fun GeneralEditor(app: MainScreenApp) {
             }
             ActionButton("Reset Values width") { Substrate.valuesWidthOverride = null }
         }
+    }
+}
+
+@Composable
+private fun SettingRow(label: String, value: String, onChange: (String) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = TEXT, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        BasicTextField(value = value, onValueChange = onChange, singleLine = true,
+            modifier = Modifier.width(80.dp).background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
+    }
+}
+
+@Composable
+private fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) ACCENT else MENU_BG
+    val fg = if (selected) Color.White else TEXT
+    Box(Modifier.height(22.dp).background(bg, RoundedCornerShape(6.dp)).clickable { onClick() }
+        .padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+        Text(label, color = fg, fontSize = 11.sp)
     }
 }
 
@@ -1548,58 +1793,36 @@ private fun ColorPicker(current: Color, onPick: (Color) -> Unit) {
     }
 }
 
-@Composable
-private fun SettingRow(label: String, value: String, onChange: (String) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = TEXT, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        BasicTextField(value = value, onValueChange = onChange, singleLine = true,
-            modifier = Modifier.width(80.dp).background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp))
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp))
-    }
+private fun copyToClipboard(text: String) {
+    try { val sel = StringSelection(text); Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel) }
+    catch (e: Exception) { Substrate.log("Copy failed: ${e.message}") }
 }
 
 @Composable
-private fun SaveStartDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss,
-        title = { Text("Save as start state?", color = TEXT) },
-        text = { Text("This will replace the current start state with the current code. Continue?", color = TEXT) },
-        confirmButton = { ActionButton("Save as start") { onConfirm() } },
-        dismissButton = { ActionButton("Cancel") { onDismiss() } })
-}
-
-@Composable
-private fun AboutDialog(onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss,
-        title = { Text("About Simple True Interpreter", color = TEXT) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Version: ${Substrate.version} (${Substrate.platform})", color = TEXT, fontSize = 12.sp)
-                Text("Language: ${Substrate.languageVersion}", color = TEXT, fontSize = 12.sp)
-                Text("Developed by Александр Кундрюков", color = TEXT, fontSize = 12.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("Links:", color = TEXT, fontSize = 12.sp)
-                Text("README: ${Substrate.GITHUB_README_URL}", color = ACCENT, fontSize = 11.sp)
-                Text("Email: a.kundryukov@gmail.com", color = ACCENT, fontSize = 11.sp)
-                Text("Telegram: @e16din", color = ACCENT, fontSize = 11.sp)
-                Text("MAX: ${Substrate.MAX_URL}", color = ACCENT, fontSize = 11.sp)
+private fun RenameFileDialog(
+    fileName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(fileName) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(12.dp), color = Color.White) {
+            Column(Modifier.width(400.dp).padding(16.dp)) {
+                Text("Rename file", color = TEXT, fontSize = 14.sp)
+                Spacer(Modifier.height(8.dp))
+                BasicTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp)).padding(6.dp),
+                    textStyle = TextStyle(color = TEXT, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionButton("Rename") { if (name.isNotBlank()) onConfirm(name) }
+                    ActionButton("Cancel") { onDismiss() }
+                }
             }
-        },
-        confirmButton = { ActionButton("Close") { onDismiss() } })
-}
-
-@Composable
-private fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) ACCENT else MENU_BG
-    val fg = if (selected) Color.White else TEXT
-    Box(Modifier.height(22.dp).background(bg, RoundedCornerShape(6.dp)).clickable { onClick() }
-        .padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-        Text(label, color = fg, fontSize = 11.sp)
+        }
     }
 }
-
-@Composable
-private fun ActionButton(label: String, onClick: () -> Unit) {
-    Button(onClick = onClick) { Text(label, color = Color.White, fontSize = 12.sp) }
-}
-

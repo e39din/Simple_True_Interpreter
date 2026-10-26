@@ -19,6 +19,7 @@ object GoldenTests {
 
     private fun runOne(item: SAMPLES.Item): Result {
         val interp = Interpreter()
+        interp.actions = ":run"
         var guard = 0
         var steps = 0
         var failure: String? = null
@@ -35,7 +36,7 @@ object GoldenTests {
         if (interp.status == Status.RUNNING) failure = failure ?: "left RUNNING"
         if (failure == null) {
             for ((k, v) in item.expectedResults) {
-                val actual = interp.results[k]
+                val actual = interp.results[k] ?: interp.variables[k]
                 if (actual != v) { failure = "result '$k' = '$actual', expected '$v'"; break }
             }
         }

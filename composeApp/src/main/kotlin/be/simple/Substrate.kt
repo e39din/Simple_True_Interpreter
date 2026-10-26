@@ -15,10 +15,19 @@ import be.`true`.Status
 
 data class TemplateGroup(val title: String, val color: Color, val templates: List<String>)
 
+enum class FileKind { CYCLE, AGENT, OTHER }
+
+fun fileKindOf(fileName: String): FileKind = when {
+    fileName.endsWith(".agent", ignoreCase = true) -> FileKind.AGENT
+    fileName.endsWith(".cycle", ignoreCase = true) -> FileKind.CYCLE
+    else -> FileKind.OTHER
+}
+
 data class TabState(
     val id: Int,
     var fileName: String,
     var code: String,
+    var kind: FileKind = fileKindOf(fileName),
     var currentStep: Int = 1,
     var status: Status = Status.STOPPED,
     var interpreter: Interpreter = Interpreter(),
@@ -38,6 +47,9 @@ class AgentState(
     var status: Status by mutableStateOf(Status.STOPPED)
     var currentStep: Int by mutableStateOf(1)
     var speedMs: Long by mutableStateOf(400L)
+    var waiter: Boolean by mutableStateOf(false)
+    var lastPressed: String? by mutableStateOf(null)
+
     var variablesSnapshot: Map<String, String> by mutableStateOf(emptyMap())
     var resultsSnapshot: Map<String, String> by mutableStateOf(emptyMap())
     var constantsSnapshot: Set<String> by mutableStateOf(emptySet())
@@ -55,7 +67,10 @@ object TabsModel {
 
     fun create(fileName: String, code: String, makeActive: Boolean = true,
                interpreter: Interpreter = Interpreter()): TabState {
-        val tab = TabState(id = newId(), fileName = fileName, code = code, interpreter = interpreter)
+        val tab = TabState(
+            id = newId(), fileName = fileName, code = code,
+            kind = fileKindOf(fileName), interpreter = interpreter
+        )
         tabs += tab
         if (makeActive || tabs.size == 1) activeIndex = tabs.lastIndex
         return tab
@@ -90,7 +105,6 @@ object TabsModel {
 }
 
 object AgentsModel {
-    const val MAX_AGENTS = 7
     val agents: SnapshotStateList<AgentState> = mutableStateListOf()
 
     val RAINBOW: List<Color> = listOf(
@@ -104,9 +118,6 @@ object AgentsModel {
     fun byName(name: String): AgentState? = agents.firstOrNull { it.name == name }
 
     fun create(name: String, fileName: String, interpreter: Interpreter): AgentState? {
-        if (agents.size >= MAX_AGENTS) return null
-        if (agentFor(fileName) != null) return null
-        if (agents.any { it.name == name }) return null
         val agent = AgentState(
             id = TabsModel.newId(), name = name, color = colorAt(agents.size),
             fileName = fileName, interpreter = interpreter
@@ -124,6 +135,19 @@ object AgentsModel {
         a.name = newName
         return true
     }
+
+    fun recalcWaiter(agent: AgentState) {
+        val tab = TabsModel.byFileName(agent.fileName) ?: return
+        agent.waiter = hasResultMarker(tab.code)
+    }
+
+    fun hasResultMarker(code: String): Boolean {
+        for (line in code.lines()) {
+            val t = line.trim()
+            if (t == ":result") return true
+        }
+        return false
+    }
 }
 
 object Substrate {
@@ -137,7 +161,7 @@ object Substrate {
         a + 1 => :math => a
         a < max ? ^ do
 
-        => stop
+        => :stop
     """.trimIndent()
 
     val GITHUB_README_URL = "https://example.com/simple-true-interpreter/README.md"
@@ -145,13 +169,14 @@ object Substrate {
 
     val DEFAULT_TEMPLATE_GROUPS = listOf(
         TemplateGroup("Naming", Color(0xFFE3F2FD), listOf(
-            "value = name", "value = name *", "value = name @", "= label", "= empty")),
+            "value = name", "value = name *", "value = name @", "= label", "= empty",
+            "= result", "value -> nothing")),
         TemplateGroup("Goto", Color(0xFFE8F5E9), listOf(
-            "^ step:5", "^ label", "1, 2 => activeTab", "1 => activeTab")),
+            "^ 5", "^ label", "^ main.cycle", "1, 2 => :activeTab", "1 => :activeTab")),
         TemplateGroup("Conditions", Color(0xFFFFF8E1), listOf(
-            "cond ? ^ step:5", "a == b ? ^ step:8", "a != b ? ^ step:1",
+            "cond ? ^ 5", "a == b ? ^ 8", "a != b ? ^ 1",
             "a < max ? ^ do", "a > max ? ^ do", "a == b ? a => b", "a != b ? a -> b",
-            "cond ? => pause")),
+            "cond ? => :pause")),
         TemplateGroup("Math", Color(0xFFFCE4EC), listOf(
             "a + b => :math", "a - b => :math", "a * b => :math", "a / b => :math",
             "a // b => :math", "a % b => :math", "a ** b => :math",
@@ -165,6 +190,10 @@ object Substrate {
             "1, 2, 3, 4, 5 => :math:max", "1, 2, 3, 4, 5 => :math:avg",
             "1, 2, 3, 4, 5 => :math:product", "1, 2, 3, 4, 5 => :math:count",
             "5, 3, 8, 1, 9 => :math:sort",
+            "1, 2, 3, 4, 5 => :sum", "1, 2, 3, 4, 5 => :min",
+            "1, 2, 3, 4, 5 => :max", "1, 2, 3, 4, 5 => :avg",
+            "1, 2, 3, 4, 5 => :product", "1, 2, 3, 4, 5 => :count",
+            "5, 3, 8, 1, 9 => :sort",
             ":math = result", "a + 1 => :math => a")),
         TemplateGroup("Data — string", Color(0xFFC8E6C9), listOf(
             "data, start, end => :data:substring",
@@ -173,25 +202,34 @@ object Substrate {
             "data => :data:lower", "data => :data:upper", "data => :data:trim",
             "data, sep => :data:chars",
             "data, i => :data:charAt",
-            "data => :data:length",
+            "data => :data:size",
+            "data:y => :data:size",
             "data => :data:reverse",
             "data => :data:unique",
             "data, v => :data:contains",
             "data, from, to => :data:slice",
             "data, cond => :filter",
             "data, regex => :matches",
-            "data, axis => :data:join")),
+            "data, axis => :data:join",
+            "data => :s", "data:y => :s")),
         TemplateGroup("Data — list", Color(0xFFA5D6A7), listOf(
             "data:y, value => :data:push",
             "data:y => :data:pop",
-            "data:y, i, value => :data:insert",
             "data:y, i => :data:remove",
             "data:y, i, j => :data:swap",
-            "data:y, i, value => :data:set",
             "data:y, from, to => :data:deleteRange",
             "data:y, from, to, value => :data:replaceRange",
-            "data:y => :data:length",
+            "data:y => :data:size",
             "data:y => :data:sort",
+            "data:y, value => :push",
+            "data:y => :pop",
+            "data:y, i => :remove",
+            "data:y, i, j => :swap",
+            "data:y => :size",
+            "data:y => :sort",
+            "value ->| data:y:3",
+            "value =>| data:y:3",
+            "value -> data:y:3",
             "data:y:1 => first", "data:y:last => last")),
         TemplateGroup("Data — multi-axis", Color(0xFF80CBC4), listOf(
             "data:z:first:y:1 => z1y1",
@@ -204,15 +242,18 @@ object Substrate {
             ". => raw:splitter:z:;",
             ". => raw:splitter:x:.")),
         TemplateGroup("Data — foreach", Color(0xFFB2EBF2), listOf(
-            "data:foreach:y ; n : out\$n, => :data:push",
-            "data:foreach:z, y ; row, col : out\$row\$col, => :data:push")),
+            "data:foreach:y ; n : out\$n, => :push,\nn => :log",
+            "data:foreach:y ; n : sum + n => :math => sum")),
+        TemplateGroup("Data — range/repeat", Color(0xFFB2DFDB), listOf(
+            "1, 5 => :range",
+            "action, 5 => :repeat")),
         TemplateGroup("JSON", Color(0xFFE0F2F1), listOf(
             "json_text, key => :json:get",
             "json_text, key, value => :json:set",
             "json_text => :json:names",
             "json_text => :json:values")),
         TemplateGroup("IO", Color(0xFFEDE7F6), listOf(
-            "command => :console", "path, flags => :run",
+            "command => :console",
             "input.txt => :get",
             "path => :get",
             "url, data => :post",
@@ -228,35 +269,48 @@ object Substrate {
             "path, content => :file:create", "path => :file:read",
             "path, content => :file:update", "path => :file:delete",
             "path => :file:list", "path => :file:exists",
+            "file:a => file:b", "file:a -> file:b",
+            "file:a => var", "var => file:b",
+            ":file:a => :path",
             "url, query => :api:get", "url, data => :api:post",
             "url, data => :api:put", "url => :api:delete", "url, data => :api:patch",
             "url => :api:websocket")),
         TemplateGroup("Functions", Color(0xFFFFFDE7), listOf(
-            "data => return", "data => :source:function",
-            "data => :test", "data => :test!")),
+            "data => :result", "data => :source:function",
+            "data => :test", "data => :test!",
+            ":run", ":log",
+            "message => :message",
+            ":error ? ^ :handle")),
+        TemplateGroup("Error", Color(0xFFFFEBEE), listOf(
+            ":error => dst", ":error:line => dst",
+            ":error:message => dst", ":error:lines => dst",
+            ":error:messages => dst")),
         TemplateGroup("Agents", Color(0xFFE1F5FE), listOf(
-            "agent:main => stop", "agent:main => pause", "agent:main => resume",
-            "agent:main => delete", "agent:main -> nothing",
-            "agent:main -> file:other", "agent:main => file:other",
-            "agent:main:currentFile => dst", "agent:main:currentStep => dst",
-            "agent:main:status => dst", "agent:status => dst",
-            "100 => agent:wait",
-            "file:main -> nothing", "value -> nothing",
+            "^ :stop", "^ :pause", "^ :resume", "^ :delete", "^ :reset",
+            ":agent:main:status => dst", ":agent:main:waiter => dst",
+            ":agent:status => dst",
+            "100 => :agent:wait",
+            "file:main.cycle -> nothing", "value -> nothing",
             ":get = response", ":math = result", ":size = lineCount",
+            ":s = lineCount",
+            "1 = step",
+            "main.cycle = cycle",
+            ":result = out",
             "0 = lineCount")),
         TemplateGroup("Other", Color(0xFFF3E5F5), listOf(
-            "1 => activeTab", "1, 5 => activeTab", "\\ literal string"))
+            "1 => :activeTab", "1, 5 => :activeTab", "\\ literal string"))
     )
 
-    var version: String by mutableStateOf("1.0.0")
-    var languageVersion: String by mutableStateOf("0.8.0")
+    var pendingRenameFile: String? by mutableStateOf(null)
+    var version: String by mutableStateOf("1.2.0")
+    var languageVersion: String by mutableStateOf("0.10.0")
     var platform: String by mutableStateOf(detectPlatform())
 
     var activeFileName: String by mutableStateOf("")
     var activeCode: String by mutableStateOf("")
     var activeCursor: Int by mutableStateOf(0)
 
-    var startFileName: String by mutableStateOf("start.true")
+    var startFileName: String by mutableStateOf("start.cycle")
     var startCode: String by mutableStateOf(DEFAULT_CODE)
 
     var activeTabView: String by mutableStateOf("Text")
@@ -265,6 +319,8 @@ object Substrate {
     var viewingAgentId: Int? by mutableStateOf(null)
     var navigateBehavior: NavigateBehavior by mutableStateOf(NavigateBehavior.EVICT)
     var expandedFileName: String? by mutableStateOf(null)
+
+    var fileOrder: List<String> by mutableStateOf(emptyList())
 
     val logEntries = mutableStateListOf<LogEntry>()
     val logLines = mutableStateListOf<String>()
@@ -288,30 +344,32 @@ object Substrate {
     var showSaveStartDialog: Boolean by mutableStateOf(false)
     var showAboutDialog: Boolean by mutableStateOf(false)
     var showTabsPicker: Boolean by mutableStateOf(false)
-    var showWelcome: Boolean by mutableStateOf(true)
     var showSearch: Boolean by mutableStateOf(false)
     var showDocDialog: Boolean by mutableStateOf(false)
-    var showTutorial: Boolean by mutableStateOf(false)
     var showSamplesDialog: Boolean by mutableStateOf(false)
     var showTemplatesDialog: Boolean by mutableStateOf(false)
-    var showCopyToDialog: Boolean by mutableStateOf(false)
-    var showMoveToDialog: Boolean by mutableStateOf(false)
-    var showDeleteAgentDialog: Boolean by mutableStateOf(false)
     var showDeleteFileDialog: Boolean by mutableStateOf(false)
     var pendingNavigateFile: String? by mutableStateOf(null)
     var pendingDeleteFile: String? by mutableStateOf(null)
-    var pendingDeleteAgentId: Int? by mutableStateOf(null)
 
     var docContent: String by mutableStateOf("")
     var docTitle: String by mutableStateOf("")
-    var welcomeShown: Boolean by mutableStateOf(false)
-    var tutorialCompleted: Boolean by mutableStateOf(false)
     var completedSamples: Set<String> by mutableStateOf(emptySet())
 
     var valuesCollapsed: Boolean by mutableStateOf(false)
+    var actionsCollapsed: Boolean by mutableStateOf(false)
+    var valuesWidthOverride: Dp? by mutableStateOf(null)
+    var actionsWidthOverride: Dp? by mutableStateOf(null)
+    var logHeightOverride: Dp? by mutableStateOf(null)
+
     var pinnedTemplates: List<String> by mutableStateOf(emptyList())
     var actionsSearchQuery: String by mutableStateOf("")
-    var valuesWidthOverride: Dp? by mutableStateOf(null)
+
+    var searchQuery: String by mutableStateOf("")
+    var replaceQuery: String by mutableStateOf("")
+    var searchMatches: List<Int> by mutableStateOf(emptyList())
+    var searchCurrent: Int by mutableStateOf(0)
+    var searchMode: String by mutableStateOf("find")
 
     var templateGroups: List<TemplateGroup> by mutableStateOf(DEFAULT_TEMPLATE_GROUPS)
     var savedTemplateSets: Map<String, List<TemplateGroup>> by mutableStateOf(emptyMap())
@@ -323,6 +381,7 @@ object Substrate {
     )
 
     var copiedValueText: String? by mutableStateOf(null)
+    var copiedActionText: String? by mutableStateOf(null)
 
     fun log(line: String) {
         logLines.add(0, line)
@@ -383,6 +442,37 @@ object Substrate {
     }
     fun loadTemplateSet(name: String) { savedTemplateSets[name]?.let { templateGroups = it } }
     fun deleteTemplateSet(name: String) { savedTemplateSets = savedTemplateSets - name }
+
+    // ---------- fileOrder ----------
+
+    fun addFileToOrder(fileName: String) {
+        if (fileOrder.contains(fileName)) return
+        fileOrder = fileOrder + fileName
+    }
+
+    fun removeFileFromOrder(fileName: String) {
+        fileOrder = fileOrder - fileName
+    }
+
+    fun moveFileUp(fileName: String) {
+        val idx = fileOrder.indexOf(fileName)
+        if (idx <= 0) return
+        val list = fileOrder.toMutableList()
+        val tmp = list[idx - 1]
+        list[idx - 1] = list[idx]
+        list[idx] = tmp
+        fileOrder = list
+    }
+
+    fun moveFileDown(fileName: String) {
+        val idx = fileOrder.indexOf(fileName)
+        if (idx < 0 || idx >= fileOrder.size - 1) return
+        val list = fileOrder.toMutableList()
+        val tmp = list[idx + 1]
+        list[idx + 1] = list[idx]
+        list[idx] = tmp
+        fileOrder = list
+    }
 
     fun detectPlatform(): String {
         val os = System.getProperty("os.name").lowercase()

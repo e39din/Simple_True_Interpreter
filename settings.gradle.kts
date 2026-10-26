@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-include(":true-core")
+
 include(":composeApp")

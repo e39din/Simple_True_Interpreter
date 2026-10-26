@@ -48,25 +48,16 @@ object SAMPLES {
         }
 
         for (line in text.lines()) {
-            val header = Regex("""^###\s+(\d+)\.\s+(.+)$""").find(line.trim())
+            val header = Regex("""^###\s+(\d+[a-z]?)\.\s+(.+)$""").find(line.trim())
             if (header != null) {
                 flush()
-                curId = "sample${header.groupValues[1]}"
+                curId = "sample${header.groupValues[1].replace(Regex("[^0-9a-z]"), "")}"
                 curTitle = "${header.groupValues[1]}. ${header.groupValues[2].trim()}"
                 curExpected = mutableMapOf()
                 inCode = false
                 continue
             }
-            val legacyHeader = Regex("""^##\s*([A-Za-z_]\w*)\s*\|\s*(.+)$""").find(line.trim())
-            if (legacyHeader != null) {
-                flush()
-                curId = legacyHeader.groupValues[1]
-                curTitle = legacyHeader.groupValues[2].trim()
-                curExpected = mutableMapOf()
-                inCode = false
-                continue
-            }
-            val expect = Regex("""^!!\s*([A-Za-z_]\w*)\s*=\s*(.+)$""").find(line.trim())
+            val expect = Regex("""^!!\s*([A-Za-z_]\w*)\s*:\s*(.+)$""").find(line.trim())
             if (expect != null && curId != null) {
                 curExpected?.put(expect.groupValues[1], expect.groupValues[2])
                 continue
@@ -74,9 +65,6 @@ object SAMPLES {
             if (line.trim() == "```true") { inCode = true; continue }
             if (line.trim() == "```") { inCode = false; continue }
             if (curId != null && inCode) buf.appendLine(line)
-            else if (curId != null && !line.trim().startsWith("#") && !line.trim().startsWith("**") && line.trim().isNotEmpty()) {
-                if (buf.isEmpty()) buf.appendLine(line)
-            }
         }
         flush()
         return items
@@ -84,12 +72,13 @@ object SAMPLES {
 
     private fun builtin(): List<Item> = listOf(
         Item("sample1", "1. Сумма массива",
-            "1, 2, 3, 4, 5 => :math:sum\nmath:sum = sum\n=> stop",
-            mapOf("math:sum" to "15")),
+            "= result\n1, 2, 3, 4, 5 => :sum => result",
+            mapOf("result" to "15")),
         Item("sample2", "2. Максимум",
-            "3, 7, 2, 9, 4 => :math:max\nmath:max = mx\n=> stop",
-            mapOf("math:max" to "9")),
+            "= result\n3, 7, 2, 9, 4 => :max => result",
+            mapOf("result" to "9")),
         Item("sample3", "3. Hello",
-            "Hello, world = out\n=> stop")
+            "Hello, world = result",
+            mapOf("result" to "Hello, world"))
     )
 }
