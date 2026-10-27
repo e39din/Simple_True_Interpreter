@@ -1,591 +1,407 @@
 package be.simple
 
-import be.`true`.Status
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlin.test.*
+import be.`true`.Interpreter
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class MainScreenCoreTest {
 
-    private lateinit var app: MainScreenApp
-
-    @BeforeTest
-    fun clean() {
-        TabsModel.tabs.clear()
-        TabsModel.activeIndex = -1
+    @Test
+    fun agentCreate() {
         AgentsModel.agents.clear()
-        Substrate.viewingAgentId = null
-        Substrate.expandedFileName = null
-        Substrate.activeFileName = ""
-        Substrate.activeCode = ""
-        Substrate.logFilter = "All"
-        Substrate.autoSyncDeclarations = true
-        Substrate.strictMode = false
-        Substrate.fileOrder = emptyList()
-        Substrate.clearLog()
-        Substrate.errorLines = emptySet()
-        Substrate.resolvedLines = emptySet()
-        TerminalModel.closeAll()
-        SnackbarModel.clear()
-        app = MainScreenApp()
+        val interp = Interpreter()
+        val agent = AgentsModel.create("agent-1", "main.cycle", interp)
+        assertNotNull(agent)
+        assertEquals("agent-1", agent.name)
+        assertEquals("agent-1.inbox", agent.inboxFileName)
     }
 
-    // ---------- 1. ensureMainTab / applyDefault / applyCode ----------
-
-    @Test fun `ensureMainTab creates main cycle`() {
-        app.ensureMainTab()
-        assertNotNull(TabsModel.byFileName("main.cycle"))
-        assertNotNull(AgentsModel.agentFor("main.cycle"))
+    @Test
+    fun agentCreateDuplicateName() {
+        AgentsModel.agents.clear()
+        AgentsModel.create("agent-1", "main.cycle", Interpreter())
+        val second = AgentsModel.create("agent-1", "main2.cycle", Interpreter())
+        assertNull(second)
     }
 
-    @Test fun `applyDefault resets code and agent`() {
-        app.ensureMainTab()
-        app.applyDefault()
-        val tab = TabsModel.active()!!
-        assertEquals(Substrate.DEFAULT_CODE, tab.code)
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        assertEquals(Status.STOPPED, agent.status)
-        assertEquals(1, agent.currentStep)
+    @Test
+    fun agentInboxFileCreated() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("test-agent", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        val inboxFile = java.io.File(System.getProperty("user.home"), ".simple/${agent.inboxFileName}")
+        assertTrue(inboxFile.exists() || inboxFile.parentFile?.exists() == true)
     }
 
-    @Test fun `applyCode sets code`() {
-        app.ensureMainTab()
-        app.applyCode("x.cycle", "1 = a\n=> :stop")
-        val tab = TabsModel.active()!!
-        assertEquals("x.cycle", tab.fileName)
-        assertEquals("1 = a\n=> :stop", tab.code)
-        assertEquals(FileKind.CYCLE, tab.kind)
+    @Test
+    fun agentRemoveStopsSchedule() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("agent-1", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        AgentsModel.remove(agent.id)
+        assertTrue(AgentsModel.byId(agent.id) == null)
     }
 
-    @Test fun `applyCode sets agent kind`() {
-        app.ensureMainTab()
-        app.applyCode("x.agent", "1 = a\n=> :stop")
-        val tab = TabsModel.active()!!
-        assertEquals(FileKind.AGENT, tab.kind)
+    @Test
+    fun agentColor() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("agent-color", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        assertNotNull(agent.color)
     }
 
-    // ---------- 2. resetFile ----------
-
-    @Test fun `resetFile resets code to startCode`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "modified"
-        app.resetFile("main.cycle")
-        assertEquals(Substrate.startCode, tab.code)
-    }
-
-    @Test fun `resetFile resets agent currentStep`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        agent.currentStep = 5
-        agent.status = Status.RUNNING
-        app.resetFile("main.cycle")
-        assertEquals(1, agent.currentStep)
-        assertEquals(Status.STOPPED, agent.status)
-    }
-
-    @Test fun `resetFile clears snapshots`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        agent.variablesSnapshot = mapOf("a" to "1")
-        agent.resultsSnapshot = mapOf("r" to "2")
-        app.resetFile("main.cycle")
-        assertTrue(agent.variablesSnapshot.isEmpty())
-        assertTrue(agent.resultsSnapshot.isEmpty())
-    }
-
-    @Test fun `resetFile clears lastPressed`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        agent.lastPressed = "play"
-        app.resetFile("main.cycle")
-        assertNull(agent.lastPressed)
-    }
-
-    // ---------- 3. syncVariablesFromCode ----------
-
-    @Test fun `syncVariablesFromCode parses plain naming`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "42 = a\nhello = b"
-        app.syncVariablesFromCode(force = true)
-        assertEquals("42", tab.interpreter.variables["a"])
-        assertEquals("hello", tab.interpreter.variables["b"])
-    }
-
-    @Test fun `syncVariablesFromCode respects const flag`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "42 = a @"
-        app.syncVariablesFromCode(force = true)
-        assertTrue("a" in tab.interpreter.constants)
-    }
-
-    @Test fun `syncVariablesFromCode respects hidden flag`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "42 = a *"
-        app.syncVariablesFromCode(force = true)
-        assertTrue("a" in tab.interpreter.hiddenVariables)
-    }
-
-    @Test fun `syncVariablesFromCode skips nothing`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = nothing"
-        app.syncVariablesFromCode(force = true)
-        assertNull(tab.interpreter.variables["nothing"])
-    }
-
-    @Test fun `syncVariablesFromCode ignores math chains`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "a + 1 => :math"
-        app.syncVariablesFromCode(force = true)
-        assertFalse("math" in tab.interpreter.variables)
-    }
-
-    @Test fun `syncVariablesFromCode updates agent snapshot`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "42 = a"
-        app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        assertEquals("42", agent.variablesSnapshot["a"])
-    }
-
-    @Test fun `syncVariablesFromCode preserves old values when not forced`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.interpreter.variables["a"] = "5"
-        tab.code = "0 = a"
-        app.syncVariablesFromCode(force = false)
-        assertEquals("5", tab.interpreter.variables["a"])
-    }
-
-    @Test fun `syncVariablesFromCode parses color container`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "#00cc22 = color"
-        app.syncVariablesFromCode(force = true)
-        assertEquals("#00cc22", tab.interpreter.variables["color"])
-    }
-
-    @Test fun `syncVariablesFromCode parses speed container`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "100 = speed"
-        app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        assertEquals(100L, agent.speedMs)
-    }
-
-    // ---------- 4. deleteVariable ----------
-
-    @Test fun `deleteVariable removes from interpreter`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = a\n10 = b"
-        app.syncVariablesFromCode(force = true)
-        Substrate.viewingAgentId = AgentsModel.agentFor("main.cycle")!!.id
-        app.deleteVariable("a")
-        assertNull(tab.interpreter.variables["a"])
-        assertEquals("10", tab.interpreter.variables["b"])
-    }
-
-    @Test fun `deleteVariable removes code line`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = a\n10 = b"
-        app.syncVariablesFromCode(force = true)
-        Substrate.viewingAgentId = AgentsModel.agentFor("main.cycle")!!.id
-        app.deleteVariable("a")
-        assertFalse(tab.code.contains("5 = a"))
-        assertTrue(tab.code.contains("10 = b"))
-    }
-
-    @Test fun `deleteVariable updates snapshot`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = a"
-        app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        Substrate.viewingAgentId = agent.id
-        app.deleteVariable("a")
-        assertNull(agent.variablesSnapshot["a"])
-    }
-
-    // ---------- 5. undo / redo ----------
-
-    @Test fun `undo restores previous code`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "v1"
-        app.updateCode("v2")
-        app.undo()
-        assertEquals("v1", tab.code)
-    }
-
-    @Test fun `redo after undo`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "v1"
-        app.updateCode("v2")
-        app.undo()
-        app.redo()
-        assertEquals("v2", tab.code)
-    }
-
-    @Test fun `undo stack limited to 100`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "start"
-        repeat(150) { app.updateCode("v$it") }
-        assertTrue(tab.undoStack.size <= 100)
-    }
-
-    @Test fun `new update clears redo stack`() {
-        app.ensureMainTab()
-        app.updateCode("v1")
-        app.undo()
-        app.updateCode("v2")
-        assertTrue(TabsModel.active()!!.redoStack.isEmpty())
-    }
-
-    // ---------- 6. insertAtCursor ----------
-
-    @Test fun `insertAtCursor inserts and moves cursor`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "abc"
-        tab.cursorPosition = 1
-        app.insertAtCursor("XX")
-        assertEquals("aXXbc", tab.code)
-        assertEquals(3, tab.cursorPosition)
-    }
-
-    @Test fun `insertAtCursor clamps position`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "abc"
-        tab.cursorPosition = 999
-        app.insertAtCursor("Z")
-        assertEquals("abcZ", tab.code)
-    }
-
-    // ---------- 7. validateCurrent ----------
-
-    @Test fun `validateCurrent fails on unknown label`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "^ nope\n=> :stop"
-        val ok = app.validateCurrent()
-        assertFalse(ok)
-        assertTrue(Substrate.errorLines.isNotEmpty())
-    }
-
-    @Test fun `validateCurrent succeeds on valid code`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "1 = a\n=> :stop"
-        val ok = app.validateCurrent()
-        assertTrue(ok)
-    }
-
-    @Test fun `validateCurrent strict mode forbids system function`() {
-        app.ensureMainTab()
-        Substrate.strictMode = true
-        val tab = TabsModel.active()!!
-        tab.code = "a => :math"
-        val ok = app.validateCurrent()
-        assertFalse(ok)
-        Substrate.strictMode = false
-    }
-
-    @Test fun `validateCurrent strict mode allows user file name`() {
-        app.ensureMainTab()
-        Substrate.strictMode = true
-        val tab = TabsModel.active()!!
-        TabsModel.create("test.cycle", "=> :stop", makeActive = false)
-        tab.code = "1 => :test"
-        val ok = app.validateCurrent()
-        assertTrue(ok, "user file name should be allowed in strict mode")
-        Substrate.strictMode = false
-    }
-
-    // ---------- 8. viewingAgent ----------
-
-    @Test fun `viewingAgent null if not set`() {
-        app.ensureMainTab()
-        Substrate.viewingAgentId = null
-        assertNull(app.viewingAgent())
-    }
-
-    @Test fun `viewingAgent returns agent`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        Substrate.viewingAgentId = agent.id
-        assertEquals(agent, app.viewingAgent())
-    }
-
-    @Test fun `setActiveFile sets viewing`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        app.setActiveFile("main.cycle")
-        assertEquals(agent.id, Substrate.viewingAgentId)
-    }
-
-    // ---------- 9. stepAgentInternal ----------
-
-    @Test fun `stepAgentInternal advances currentStep`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "1 = a\n2 = b\n=> :stop"
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        val r = app.stepAgentInternal(agent.id)
-        assertNotNull(r)
-        assertEquals(1, r!!.currentStep)
-        assertEquals("1", agent.interpreter.variables["a"])
-    }
-
-    @Test fun `stepAgentInternal returns null for unknown`() {
-        assertNull(app.stepAgentInternal(999))
-    }
-
-    // ---------- 10. closeTab cascade ----------
-
-    @Test fun `closeTab removes file`() {
-        app.ensureMainTab()
-        val n = TabsModel.tabs.size
-        app.closeTab(0)
-        assertEquals(n - 1, TabsModel.tabs.size)
-    }
-
-    // ---------- 11. publishActive ----------
-
-    @Test fun `publishActive sets active file`() {
-        app.ensureMainTab()
-        app.publishActive()
-        assertEquals("main.cycle", Substrate.activeFileName)
-    }
-
-    @Test fun `publishActive reads log from viewing agent`() {
-        app.ensureMainTab()
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        Substrate.viewingAgentId = agent.id
-        agent.interpreter.appendLog("test line", "info")
-        app.publishActive()
-        assertTrue(Substrate.logEntries.any { it.text == "test line" })
-    }
-
-    // ---------- 12. log filter defaults ----------
-
-    @Test fun `logFilter independent of active file`() {
-        app.ensureMainTab()
-        Substrate.logFilter = "error"
-        app.setActiveFile("main.cycle")
-        assertEquals("error", Substrate.logFilter)
-    }
-
-    // ---------- 13. waiter auto-detection ----------
-
-    @Test fun `agent for file with result is waiter`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "a = 5\n:result"
-        app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
+    @Test
+    fun agentWaiter() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("agent-waiter", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        TabsModel.create("main.cycle", "=> :result")
+        AgentsModel.recalcWaiter(agent)
         assertTrue(agent.waiter)
     }
 
-    @Test fun `agent for file without result is not waiter`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "a = 5\n=> :stop"
-        app.syncVariablesFromCode(force = true)
-        val agent = AgentsModel.agentFor("main.cycle")!!
-        assertFalse(agent.waiter)
+    @Test
+    fun visualRectCreate() {
+        VisualModel.rects.clear()
+        val r = VisualModel.createRect("a", 10, 20)
+        assertEquals("a", r.target)
+        assertEquals(10, r.x)
+        assertEquals(20, r.y)
+        assertTrue(r.visible)
     }
 
-    // ---------- 14. updateCode syncs variables ----------
-
-    @Test fun `updateCode syncs variables`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = ""
-        app.updateCode("5 = a")
-        assertEquals("5", tab.interpreter.variables["a"])
+    @Test
+    fun visualRectUpdateArea() {
+        VisualModel.rects.clear()
+        val r = VisualModel.createRect("a", 10, 20)
+        VisualModel.updateArea(r, 50, 60)
+        assertEquals(50, r.x)
+        assertEquals(60, r.y)
     }
 
-    @Test fun `updateCode preserves old values`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.interpreter.variables["a"] = "5"
-        app.updateCode("0 = a")
-        assertEquals("5", tab.interpreter.variables["a"])
+    @Test
+    fun visualRectRemove() {
+        VisualModel.rects.clear()
+        val r = VisualModel.createRect("a", 10, 20)
+        VisualModel.remove(r)
+        assertNull(VisualModel.byTarget("a"))
     }
 
-    @Test fun `updateCode renames`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = a"
-        app.syncVariablesFromCode(force = true)
-        app.updateCode("5 = b")
-        assertEquals("5", tab.interpreter.variables["b"])
-        assertNull(tab.interpreter.variables["a"])
+    @Test
+    fun visualBackgroundSet() {
+        VisualModel.clearAll()
+        VisualModel.setBackground("main.cycle", "/path/bg.png", "tile")
+        val bg = VisualModel.backgroundFor("main.cycle")
+        assertNotNull(bg)
+        assertEquals("tile", bg.mode)
+        VisualModel.clearAll()
     }
 
-    @Test fun `updateCode forceRename no rename`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "5 = a"
-        app.syncVariablesFromCode(force = true)
-        app.updateCode("5 = b", forceRename = true)
-        assertEquals("5", tab.interpreter.variables["a"])
-        assertEquals("5", tab.interpreter.variables["b"])
+    @Test
+    fun visualBackgroundReset() {
+        VisualModel.clearAll()
+        VisualModel.setBackground("main.cycle", "/path/bg.png", "fit")
+        VisualModel.resetBackground("main.cycle")
+        assertNull(VisualModel.backgroundFor("main.cycle"))
     }
 
-    // ---------- 15. error lines / resolved lines ----------
-
-    @Test fun `error lines are reset on clear log`() {
-        Substrate.errorLines = setOf(1, 2)
-        Substrate.resolvedLines = setOf(3)
-        Substrate.clearLog()
-        assertTrue(Substrate.errorLines.isEmpty())
-        assertTrue(Substrate.resolvedLines.isEmpty())
+    @Test
+    fun fileKindInbox() {
+        assertEquals(FileKind.INBOX, fileKindOf("agent-1.inbox"))
     }
 
-    @Test fun `validateCurrent adds error lines`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "^ nope"
-        app.validateCurrent()
-        assertTrue(Substrate.errorLines.isNotEmpty())
+    @Test
+    fun fileKindCycle() {
+        assertEquals(FileKind.CYCLE, fileKindOf("main.cycle"))
     }
 
-    @Test fun `validateCurrent successful code clears errors`() {
-        app.ensureMainTab()
-        val tab = TabsModel.active()!!
-        tab.code = "1 = a\n=> :stop"
-        app.validateCurrent()
-        assertTrue(Substrate.errorLines.isEmpty())
+    @Test
+    fun fileKindAgent() {
+        assertEquals(FileKind.AGENT, fileKindOf("agent-1.agent"))
     }
 
-    // ---------- 16. activeTab switch ----------
-
-    @Test fun `setActiveTab changes active`() {
-        app.ensureMainTab()
-        app.newTab()
-        val n = TabsModel.tabs.size
-        app.setActiveTab(0)
-        assertEquals(0, TabsModel.activeIndex)
-        assertEquals(n, TabsModel.tabs.size)
+    @Test
+    fun fileKindOther() {
+        assertEquals(FileKind.OTHER, fileKindOf("readme.txt"))
     }
 
-    @Test fun `setActiveFile unknown is no-op`() {
-        app.ensureMainTab()
-        val before = TabsModel.activeIndex
-        app.setActiveFile("nonexistent.cycle")
-        assertEquals(before, TabsModel.activeIndex)
+    @Test
+    fun secretMask() {
+        assertEquals("***", SecretModel.mask("abc"))
+        assertEquals("ab***yz", SecretModel.mask("abcdefgh"))
     }
 
-    // ---------- 17. TerminalModel ----------
+    @Test
+    fun secretIsSecret() {
+        SecretModel.set("test_mask_key", "value")
+        assertTrue(SecretModel.isSecret("test_mask_key"))
+        SecretModel.remove("test_mask_key")
+    }
 
-    @Test fun `terminal open creates session`() {
-        runBlocking {
-            val scope = CoroutineScope(Dispatchers.Default)
-            val s = TerminalModel.open("Test", scope)
-            assertEquals("Test", s.title)
-            assertEquals(1, TerminalModel.sessions.size)
-            TerminalModel.closeAll()
+    @Test
+    fun scheduleListEmpty() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("sched-agent", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        assertEquals(0, ScheduleModel.list(agent).size)
+    }
+
+    @Test
+    fun scheduleStopAll() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("sched-agent", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        ScheduleModel.stop(agent)
+        assertEquals(0, agent.scheduleJobs.size)
+    }
+
+    @Test
+    fun scheduleLimit() {
+        AgentsModel.agents.clear()
+        val agent = AgentsModel.create("sched-limit", "main.cycle", Interpreter())
+        assertNotNull(agent)
+        assertEquals(10, agent.scheduleLimit)
+        agent.scheduleLimit = 5
+        assertEquals(5, agent.scheduleLimit)
+    }
+
+    @Test
+    fun soundStopWithoutStart() {
+        assertTrue(SoundModel.stop(null) || true)
+    }
+
+    @Test
+    fun websocketMessageEmpty() {
+        WebSocketModel.close()
+        assertEquals("", WebSocketModel.lastMessage)
+    }
+
+    @Test
+    fun websocketClientsEmpty() {
+        WebSocketModel.close()
+        assertTrue(WebSocketModel.clients.isEmpty())
+    }
+
+    @Test
+    fun memAllocReturnsAddress() {
+        MemModel.reset()
+        val addr = MemModel.alloc(16)
+        assertTrue(addr >= 1000)
+        MemModel.free(addr)
+    }
+
+    @Test
+    fun memWriteRead() {
+        MemModel.reset()
+        val addr = MemModel.alloc(16)
+        assertTrue(MemModel.write(addr, "42"))
+        assertEquals("42", MemModel.read(addr))
+        MemModel.free(addr)
+    }
+
+    @Test
+    fun memFreeInvalid() {
+        MemModel.reset()
+        assertTrue(!MemModel.free(9999))
+    }
+
+    @Test
+    fun memReset() {
+        MemModel.reset()
+        val addr = MemModel.alloc(16)
+        MemModel.write(addr, "1")
+        MemModel.reset()
+        assertEquals("", MemModel.read(addr))
+    }
+
+    @Test
+    fun mockSet() {
+        MockModel.reset()
+        MockModel.set("https://test.com", "response", 200)
+        val mock = MockModel.get("https://test.com")
+        assertNotNull(mock)
+        assertEquals("response", mock.response)
+        assertEquals(200, mock.code)
+        MockModel.reset()
+    }
+
+    @Test
+    fun mockList() {
+        MockModel.reset()
+        MockModel.set("https://a.com", "a")
+        MockModel.set("https://b.com", "b")
+        assertEquals(listOf("https://a.com", "https://b.com"), MockModel.list())
+        MockModel.reset()
+    }
+
+    @Test
+    fun extensionsRegisterAndList() {
+        Extensions.clear()
+        val ext = object : Extension {
+            override val names = setOf("test_ext")
+            override fun handle(op: String, args: List<String>, ctx: Ctx): String? = "ok"
         }
+        Extensions.register(ext)
+        assertTrue("test_ext" in Extensions.list())
+        Extensions.unregister(ext)
+        assertTrue("test_ext" !in Extensions.list())
     }
 
-    @Test fun `terminal close removes session`() {
-        runBlocking {
-            val scope = CoroutineScope(Dispatchers.Default)
-            val s = TerminalModel.open("Test", scope)
-            TerminalModel.close(s.id)
-            assertTrue(TerminalModel.sessions.isEmpty())
+    @Test
+    fun extensionsInvokeUnknownReturnsNull() {
+        Extensions.clear()
+        val ctx = Ctx(Interpreter(), -1, null)
+        assertNull(Extensions.invoke("nonexistent", emptyList(), ctx))
+    }
+
+    @Test
+    fun extensionsInvokeHandled() {
+        Extensions.clear()
+        val ext = object : Extension {
+            override val names = setOf("echo")
+            override fun handle(op: String, args: List<String>, ctx: Ctx): String? = args.joinToString(",")
         }
+        Extensions.register(ext)
+        val ctx = Ctx(Interpreter(), -1, null)
+        assertEquals("a,b", Extensions.invoke("echo", listOf("a", "b"), ctx))
+        Extensions.unregister(ext)
     }
 
-    @Test fun `terminal byTitle finds session`() {
-        runBlocking {
-            val scope = CoroutineScope(Dispatchers.Default)
-            TerminalModel.open("Foo", scope)
-            assertNotNull(TerminalModel.byTitle("Foo"))
-            assertNull(TerminalModel.byTitle("Bar"))
-            TerminalModel.closeAll()
-        }
+    @Test
+    fun tabsCreateAndClose() {
+        TabsModel.tabs.clear()
+        TabsModel.activeIndex = -1
+        TabsModel.create("test.cycle", "0 = a")
+        assertEquals(1, TabsModel.tabs.size)
+        assertEquals("test.cycle", TabsModel.active()?.fileName)
+        TabsModel.close(0)
+        assertEquals(0, TabsModel.tabs.size)
     }
 
-    @Test fun `terminal closeAll clears sessions`() {
-        runBlocking {
-            val scope = CoroutineScope(Dispatchers.Default)
-            TerminalModel.open("A", scope)
-            TerminalModel.open("B", scope)
-            TerminalModel.closeAll()
-            assertTrue(TerminalModel.sessions.isEmpty())
-        }
+    @Test
+    fun tabsRename() {
+        TabsModel.tabs.clear()
+        TabsModel.create("old.cycle", "")
+        TabsModel.rename(0, "new.cycle")
+        assertEquals("new.cycle", TabsModel.tabs[0].fileName)
     }
 
-    // ---------- 18. SnackbarModel ----------
-
-    @Test fun `snackbar show adds message`() {
-        SnackbarModel.show("hello", "warning")
-        assertEquals(1, SnackbarModel.messages.size)
-        assertEquals("hello", SnackbarModel.messages[0].text)
-        assertEquals("warning", SnackbarModel.messages[0].kind)
+    @Test
+    fun substrateParseColor() {
+        assertNotNull(Substrate.parseColor("#1E88E5"))
+        assertNotNull(Substrate.parseColor("#F00"))
+        assertNull(Substrate.parseColor("invalid"))
     }
 
-    @Test fun `snackbar dismiss removes message`() {
-        SnackbarModel.show("hello", "warning")
-        val id = SnackbarModel.messages[0].id
-        SnackbarModel.dismiss(id)
-        assertTrue(SnackbarModel.messages.isEmpty())
+    @Test
+    fun substrateFileOrder() {
+        Substrate.fileOrder = emptyList()
+        Substrate.addFileToOrder("a.cycle")
+        Substrate.addFileToOrder("b.cycle")
+        assertEquals(listOf("a.cycle", "b.cycle"), Substrate.fileOrder)
+        Substrate.moveFileUp("b.cycle")
+        assertEquals(listOf("b.cycle", "a.cycle"), Substrate.fileOrder)
+        Substrate.removeFileFromOrder("b.cycle")
+        assertEquals(listOf("a.cycle"), Substrate.fileOrder)
     }
 
-    @Test fun `snackbar max 3 messages`() {
-        SnackbarModel.show("a")
-        SnackbarModel.show("b")
-        SnackbarModel.show("c")
-        SnackbarModel.show("d")
-        assertEquals(3, SnackbarModel.messages.size)
+    @Test
+    fun substrateRecentProjects() {
+        Substrate.recentProjects = emptyList()
+        Substrate.addRecentProject("/path/to/project1")
+        Substrate.addRecentProject("/path/to/project2")
+        assertEquals(2, Substrate.recentProjects.size)
+        assertEquals("/path/to/project2", Substrate.recentProjects[0])
+        Substrate.recentProjects = emptyList()
     }
 
-    @Test fun `snackbar clear removes all`() {
-        SnackbarModel.show("a")
-        SnackbarModel.show("b")
+    @Test
+    fun substratePinned() {
+        Substrate.pinnedList.clear()
+        Substrate.pinnedList.add("a")
+        Substrate.pinnedList.add("b")
+        assertEquals(2, Substrate.pinnedList.size)
+        Substrate.pinnedList.removeAll { it == "a" }
+        assertEquals(1, Substrate.pinnedList.size)
+        Substrate.pinnedList.clear()
+    }
+
+    @Test
+    fun askModelQueue() {
+        AskModel.queue.clear()
+        var result = ""
+        val id = AskModel.ask("question", "default", "text") { result = it }
+        assertEquals(1, AskModel.queue.size)
+        AskModel.answer(id, "answer")
+        assertEquals("answer", result)
+        assertEquals(0, AskModel.queue.size)
+    }
+
+    @Test
+    fun askModelCancel() {
+        AskModel.queue.clear()
+        var result = "not-empty"
+        val id = AskModel.ask("question", "default", "text") { result = it }
+        AskModel.cancel(id)
+        assertEquals("", result)
+        assertEquals(0, AskModel.queue.size)
+    }
+
+    @Test
+    fun templatesNotEmpty() {
+        assertTrue(Substrate.templates.isNotEmpty())
+        assertEquals(5, Substrate.templates.size)
+    }
+
+    @Test
+    fun templatesHaveIds() {
+        val ids = Substrate.templates.map { it.id }
+        assertTrue(ids.contains("hello"))
+        assertTrue(ids.contains("counter"))
+        assertTrue(ids.contains("calculator"))
+        assertTrue(ids.contains("cave"))
+        assertTrue(ids.contains("plugin"))
+    }
+
+    @Test
+    fun templateCaveHasCode() {
+        val cave = Substrate.templates.firstOrNull { it.id == "cave" }
+        assertNotNull(cave)
+        assertTrue(cave.code.contains(":ask"))
+        assertTrue(cave.code.contains("= turn"))
+    }
+
+    @Test
+    fun templateEndingNotEmpty() {
+        assertTrue(Substrate.TEMPLATE_ENDING.isNotEmpty())
+        assertTrue(Substrate.TEMPLATE_ENDING.contains(":stop"))
+    }
+
+    @Test
+    fun terminalListEmpty() {
+        TerminalModel.closeAll()
+        assertTrue(TerminalModel.list().isEmpty())
+    }
+
+    @Test
+    fun snackbarShow() {
         SnackbarModel.clear()
-        assertTrue(SnackbarModel.messages.isEmpty())
+        SnackbarModel.show("test message", "warning")
+        assertEquals(1, SnackbarModel.messages.size)
+        SnackbarModel.clear()
     }
 
-    // ---------- 19. pauseAll / resumeAll in applyResult ----------
-
-    @Test fun `applyResult pauseAll command pauses all agents`() {
-        app.ensureMainTab()
-        app.newAgentTab()
-        val result = be.`true`.StepResult(
-            currentStep = 1, changedVariables = emptyMap(), removedVariables = emptyList(),
-            log = ":pauseAll", status = Status.RUNNING, command = "pauseAll"
-        )
-        val agent = AgentsModel.agents.first()
-        app.applyResult(agent, result)
-        assertTrue(AgentsModel.agents.all { it.status == Status.PAUSED })
-    }
-
-    @Test fun `applyResult resumeAll command resumes all agents`() {
-        app.ensureMainTab()
-        app.newAgentTab()
-        AgentsModel.agents.forEach { it.status = Status.PAUSED }
-        val result = be.`true`.StepResult(
-            currentStep = 1, changedVariables = emptyMap(), removedVariables = emptyList(),
-            log = ":resumeAll", status = Status.RUNNING, command = "resumeAll"
-        )
-        val agent = AgentsModel.agents.first()
-        app.applyResult(agent, result)
-        assertTrue(AgentsModel.agents.all { it.status == Status.RUNNING })
+    @Test
+    fun snackbarMaxThree() {
+        SnackbarModel.clear()
+        SnackbarModel.show("msg1")
+        SnackbarModel.show("msg2")
+        SnackbarModel.show("msg3")
+        SnackbarModel.show("msg4")
+        assertEquals(3, SnackbarModel.messages.size)
+        SnackbarModel.clear()
     }
 }

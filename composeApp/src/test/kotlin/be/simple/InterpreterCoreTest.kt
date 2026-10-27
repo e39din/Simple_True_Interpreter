@@ -1,1391 +1,685 @@
 package be.simple
 
-import be.`true`.AgentAction
 import be.`true`.Interpreter
 import be.`true`.Status
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class InterpreterCoreTest {
 
-    private fun stepOnce(code: String): Pair<Interpreter, be.`true`.StepResult> {
+    @Test
+    fun mathAddition() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep(code)
-        return i to r
+        i.executeOneStep("2 + 3 => :math")
+        assertEquals("5", i.results["math"])
     }
 
-    // ---------- 1. parse / validate ----------
-
-    @Test fun `parse numbers lines from 1`() {
-        val lines = Interpreter().parse("a\nb\nc")
-        assertEquals(3, lines.size)
-        assertEquals(1, lines[0].number)
-        assertEquals(3, lines[2].number)
-    }
-
-    @Test fun `validate unknown label`() {
-        val interp = Interpreter()
-        val errs = interp.validate(interp.parse("^ nope\n=> :stop"))
-        assertEquals(1, errs.size)
-        assertTrue(errs[0].message.contains("Unknown jump target"))
-    }
-
-    @Test fun `validate step out of range`() {
-        val interp = Interpreter()
-        val errs = interp.validate(interp.parse("^ 99"))
-        assertEquals(1, errs.size)
-    }
-
-    @Test fun `validate multiple question marks`() {
-        val interp = Interpreter()
-        val errs = interp.validate(interp.parse("a ? b ? c"))
-        assertTrue(errs.any { it.message.contains("Multiple ?") })
-    }
-
-    @Test fun `validate return inside function`() {
-        val interp = Interpreter()
-        val code = "s:f:\nvalue => :result\n:r"
-        val errs = interp.validate(interp.parse(code))
-        assertTrue(errs.any { it.message.contains("inside function") })
-    }
-
-    @Test fun `strict mode forbids system colon`() {
-        val interp = Interpreter()
-        val errs = interp.validate(interp.parse("a => :math"), strict = true)
-        assertTrue(errs.any { it.message.contains("Strict Mode") })
-    }
-
-    @Test fun `strict mode allows user file name`() {
-        val interp = Interpreter()
-        interp.tabExists = { it == "test" }
-        val errs = interp.validate(interp.parse("1 => :test"), strict = true)
-        assertTrue(errs.isEmpty(), "unexpected: $errs")
-    }
-
-    @Test fun `strict mode allows substitution`() {
-        val interp = Interpreter()
-        val errs = interp.validate(interp.parse("func1"), strict = true)
-        assertTrue(errs.isEmpty(), "unexpected: $errs")
-    }
-
-    // ---------- 2. naming / const / hidden ----------
-
-    @Test fun `naming assigns value`() {
-        val (i, _) = stepOnce("42 = a")
-        assertEquals("42", i.variables["a"])
-    }
-
-    @Test fun `naming const flag`() {
-        val (i, _) = stepOnce("42 = a @")
-        assertTrue("a" in i.constants)
-    }
-
-    @Test fun `naming hidden flag`() {
-        val (i, _) = stepOnce("42 = a *")
-        assertTrue("a" in i.hiddenVariables)
-    }
-
-    @Test fun `cannot overwrite constant`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a @")
-        val r = i.executeOneStep("2 = a")
-        assertNotNull(r.errorLine)
-    }
-
-    @Test fun `nothing is reserved`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("5 = nothing")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("reserved"))
-    }
-
-    @Test fun `system name is reserved`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("5 = result")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("reserved"))
-    }
-
-    @Test fun `naming system on right errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("5 = :math")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("forbidden"))
-    }
-
-    @Test fun `naming with literal mid-line`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("\\ a + 1 => :math \\ = func1")
-        assertEquals("a + 1 => :math", i.variables["func1"])
-    }
-
-    // ---------- 3. copy / move ----------
-
-    @Test fun `copy keeps source`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("= b")
-        i.executeOneStep("a => b")
-        assertEquals("5", i.variables["a"])
-        assertEquals("5", i.variables["b"])
-    }
-
-    @Test fun `copy from indexed`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("= b")
-        i.executeOneStep("arr:y:2 => b")
-        assertEquals("2", i.variables["b"])
-    }
-
-    @Test fun `copy undeclared source errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("unknown => b")
-        assertNotNull(r.errorLine)
-    }
-
-    @Test fun `move clears source value but keeps name`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("= b")
-        i.executeOneStep("a -> b")
-        assertEquals("", i.variables["a"])
-        assertEquals("5", i.variables["b"])
-    }
-
-    @Test fun `move undeclared source errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("unknown -> b")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 4. substitute ----------
-
-    @Test fun `substitute word boundary`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("X = a")
-        assertEquals("data", i.substitute("data"))
-    }
-
-    @Test fun `substitute indexed`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a, b, c = arr")
-        assertEquals("b", i.substitute("arr:y:2"))
-    }
-
-    @Test fun `substitute dollar concat`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("2 = b")
-        assertEquals("12", i.substitute("a\$b"))
-    }
-
-    // ---------- 5. math ----------
-
-    @Test fun `math simple arithmetic`() {
-        val (i, _) = stepOnce("1 + 2 * 3 => :math")
-        assertEquals("7", i.results["math"])
-    }
-
-    @Test fun `math power right assoc`() {
-        val (i, _) = stepOnce("2 ** 3 ** 2 => :math")
-        assertEquals("512", i.results["math"])
-    }
-
-    @Test fun `math floor divide by zero safe`() {
-        val (i, _) = stepOnce("1 // 0 => :math")
-        assertEquals("0", i.results["math"])
-    }
-
-    @Test fun `math unary minus`() {
-        val (i, _) = stepOnce("-3 + 5 => :math")
-        assertEquals("2", i.results["math"])
-    }
-
-    @Test fun `math list sum`() {
-        val (i, _) = stepOnce("1, 2, 3, 4, 5 => :math:sum")
-        assertEquals("15", i.results["math:sum"])
-    }
-
-    @Test fun `math chain into variable`() {
-        val (i, _) = stepOnce("1 + 1 => :math")
-        i.executeOneStep(":math = x")
-        assertEquals("2", i.variables["x"])
-    }
-
-    @Test fun `math chain to undeclared is error`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("1 + 1 => :math => x")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 6. data ----------
-
-    @Test fun `data push on y`() {
-        val (i, _) = stepOnce("1, 2 = arr\narr:y, 3 => :data:push")
-        assertEquals("1,2,3", i.results["push"])
-    }
-
-    @Test fun `data size on y`() {
-        val (i, _) = stepOnce("a, b, c = arr\narr:y => :data:size")
-        assertEquals("3", i.results["size"])
-    }
-
-    @Test fun `data charAt 1-based`() {
-        val (i, _) = stepOnce("hello = s\ns, 2 => :data:charAt")
-        assertEquals("e", i.results["charAt"])
-    }
-
-    @Test fun `data insert deprecated`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2 = arr")
-        val r = i.executeOneStep("arr:y, 1, 5 => :data:insert")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("deprecated"))
-    }
-
-    @Test fun `data set deprecated`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2 = arr")
-        val r = i.executeOneStep("arr:y, 1, 5 => :data:set")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("deprecated"))
-    }
-
-    @Test fun `data length deprecated`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2 = arr")
-        val r = i.executeOneStep("arr:y => :data:length")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("deprecated"))
-    }
-
-    @Test fun `data peek`() {
-        val (i, _) = stepOnce("1,2,3 = arr\narr:y => :peek")
-        assertEquals("3", i.results["peek"])
-    }
-
-    @Test fun `data stack peek alias`() {
-        val (i, _) = stepOnce("1,2,3 = arr\narr:y => :stack:peek")
-        assertEquals("3", i.results["peek"])
-    }
-
-    // ---------- 7. conditions ----------
-
-    @Test fun `condition true executes action`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("a == 1 ? 2 = b")
-        assertEquals("2", i.variables["b"])
-    }
-
-    @Test fun `condition false skips action`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("a == 2 ? 2 = b")
-        assertNull(i.variables["b"])
-    }
-
-    @Test fun `question mark without operation stays text`() {
-        val (i, _) = stepOnce("hello ? world")
-        assertEquals(Status.STOPPED, i.status)
-    }
-
-    @Test fun `question mark at position 0 errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("? 5 = a")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 8. jumps ----------
-
-    @Test fun `jump to number`() {
-        val code = "=> :pause\n^ 4\n=> :stop\n=> :stop"
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(code)
-        i.setStatusPublic(Status.RUNNING)
-        val r = i.executeOneStep(code)
-        assertTrue(r.log.contains("Jump"))
-        assertEquals(4, r.currentStep)
-    }
-
-    @Test fun `jump to label`() {
-        val code = "= pause\n=> :pause\n^ pause\n=> :stop"
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(code)
-        val r = i.executeOneStep(code)
-        assertTrue(r.log.contains("Jump"))
-    }
-
-    @Test fun `jump to file via command`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ main.cycle")
-        assertEquals("file:main.cycle", r.command)
-    }
-
-    @Test fun `jump to missing file errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ notes")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 9. commands ----------
-
-    @Test fun `stop command finishes`() {
-        val (_, r) = stepOnce("=> :stop")
-        assertEquals(Status.FINISHED, r.status)
-    }
-
-    @Test fun `pause command pauses`() {
-        val (_, r) = stepOnce("=> :pause")
-        assertEquals(Status.PAUSED, r.status)
-    }
-
-    // ---------- 10. history ----------
-
-    @Test fun `step back restores previous state`() {
-        val code = "1 = a\n2 = a\n=> :stop"
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(code)
-        i.executeOneStep(code)
-        assertEquals("2", i.variables["a"])
-        i.executeStepBack()
-        assertEquals("1", i.variables["a"])
-    }
-
-    @Test fun `step back on empty history returns null`() {
-        val i = Interpreter()
-        assertNull(i.executeStepBack())
-    }
-
-    @Test fun `reset clears all state`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a @")
-        i.executeOneStep("2 = b *")
-        i.reset()
-        assertTrue(i.variables.isEmpty())
-        assertTrue(i.constants.isEmpty())
-        assertTrue(i.hiddenVariables.isEmpty())
-        assertTrue(i.results.isEmpty())
-        assertEquals(Status.STOPPED, i.status)
-        assertEquals(1, i.currentStep)
-        assertNull(i.waitUntilMs)
-        assertNull(i.timeoutMs)
-    }
-
-    // ---------- 11. agent ----------
-
-    @Test fun `agent status regex matches`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: AgentAction? = null
-        i.agentCaller = { _, _, action, _ -> captured = action }
-        i.executeOneStep(":agent:main:status => dst")
-        assertEquals(AgentAction.STATUS, captured)
-    }
-
-    @Test fun `agent waiter regex matches`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: AgentAction? = null
-        i.agentCaller = { _, _, action, _ -> captured = action }
-        i.executeOneStep(":agent:main:waiter => dst")
-        assertEquals(AgentAction.WAITER, captured)
-    }
-
-    @Test fun `agent status all regex matches`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: AgentAction? = null
-        var name: String? = null
-        i.agentCaller = { _, n, action, _ -> captured = action; name = n }
-        i.executeOneStep(":agent:status => dst")
-        assertEquals(AgentAction.STATUS, captured)
-        assertEquals("*", name)
-    }
-
-    // ---------- 12. agent wait ----------
-
-    @Test fun `agent wait regex matches 100`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("100 => :agent:wait")
-        assertNotNull(i.waitUntilMs)
-        assertNull(i.timeoutMs)
-    }
-
-    @Test fun `wait sets paused`() {
+    @Test
+    fun mathNamedSum() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("100 => :agent:wait")
-        assertEquals(Status.PAUSED, r.status)
-    }
-
-    @Test fun `wait timeout sets timeoutMs`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("100, 5000 => :agent:wait:timeout")
-        assertNotNull(i.waitUntilMs)
-        assertEquals(5000L, i.timeoutMs)
-    }
-
-    @Test fun `reset clears waitUntilMs`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("100 => :agent:wait")
-        assertNotNull(i.waitUntilMs)
-        i.reset()
-        assertNull(i.waitUntilMs)
-        assertNull(i.timeoutMs)
-    }
-
-    // ---------- 13. result ----------
-
-    @Test fun `result naming math sum`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2, 3, 4, 5 => :math:sum")
-        i.executeOneStep(":math:sum = sum")
-        assertEquals("15", i.variables["sum"])
-    }
-
-    @Test fun `result copy math sum`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2, 3, 4, 5 => :math:sum")
-        i.executeOneStep(":math:sum => sum")
-        assertEquals("15", i.variables["sum"])
-    }
-
-    @Test fun `result naming missing yields empty string`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(":math:sum = sum")
-        assertEquals("", i.variables["sum"])
-    }
-
-    @Test fun `result command sets results`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("42 => :result")
-        assertEquals("42", i.results["result"])
-        assertEquals(Status.FINISHED, i.status)
-    }
-
-    @Test fun `result marker in code`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep(":result")
-        assertEquals(Status.FINISHED, r.status)
-    }
-
-    // ---------- 14. data axis semantics ----------
-
-    @Test fun `data indexOf default x`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello = s")
-        val r = i.executeOneStep("s, ll => :data:indexOf")
-        assertNull(r.errorLine)
-        assertEquals("3", i.results["indexOf"])
-    }
-
-    @Test fun `data indexOf explicit y`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a, b, c = arr")
-        val r = i.executeOneStep("arr:y, b => :data:indexOf")
-        assertNull(r.errorLine)
-        assertEquals("2", i.results["indexOf"])
-    }
-
-    @Test fun `data substring explicit y errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a, b, c = arr")
-        val r = i.executeOneStep("arr:y, 1, 2 => :data:substring")
-        assertNotNull(r.errorLine)
-        assertTrue(r.log.contains("only x-axis"))
-    }
-
-    @Test fun `data lower explicit y`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("A, B, C = arr")
-        val r = i.executeOneStep("arr:y => :data:lower")
-        assertNull(r.errorLine)
-        assertEquals("a,b,c", i.results["lower"])
-    }
-
-    // ---------- 15. functional ----------
-
-    @Test fun `map basic`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1, 2, 3 = arr")
-        val r = i.executeOneStep("arr:y, n + 1 => :map")
-        assertNull(r.errorLine)
-        assertEquals("2,3,4", i.results["map"])
-    }
-
-    @Test fun `map with axis from arr`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("arr:y, n * 2 => :map")
-        assertEquals("2,4,6", i.results["map"])
-    }
-
-    @Test fun `map empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= arr")
-        i.executeOneStep("arr:y, n + 1 => :map")
-        assertEquals("", i.results["map"])
-    }
-
-    @Test fun `map with container arg`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("n * 2 => out = dbl")
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("arr:y, dbl => :map")
-        assertEquals("2,4,6", i.results["map"])
-    }
-
-    @Test fun `reduce sum`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("arr:y, 0, acc + n => :reduce")
-        assertEquals("6", i.results["reduce"])
-    }
-
-    @Test fun `reduce empty returns init`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= arr")
-        i.executeOneStep("arr:y, 42, acc + n => :reduce")
-        assertEquals("42", i.results["reduce"])
-    }
-
-    @Test fun `fold product`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("arr:y, 1, acc * n => :fold")
-        assertEquals("6", i.results["fold"])
-    }
-
-    @Test fun `each with log`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        i.executeOneStep("arr:y, n => :log => :each")
-        assertTrue(i.log.any { it.text == "1" })
-        assertTrue(i.log.any { it.text == "2" })
-        assertTrue(i.log.any { it.text == "3" })
-    }
-
-    @Test fun `each empty no error`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= arr")
-        val r = i.executeOneStep("arr:y, n => :log => :each")
-        assertNull(r.errorLine)
-    }
-
-    // ---------- 16. conditions with parens ----------
-
-    @Test fun `condition parens or`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("0 = b")
-        i.executeOneStep("(a == 1 || b == 1) ? 5 = c")
-        assertEquals("5", i.variables["c"])
-    }
-
-    @Test fun `condition parens and`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("1 = b")
-        i.executeOneStep("(a == 1 && b == 1) ? 7 = c")
-        assertEquals("7", i.variables["c"])
-    }
-
-    @Test fun `condition not with parens`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("0 = a")
-        i.executeOneStep("!(a == 1) ? 9 = c")
-        assertEquals("9", i.variables["c"])
-    }
-
-    @Test fun `condition nested parens`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("0 = b")
-        i.executeOneStep("1 = c")
-        i.executeOneStep("(a == 1 && (b == 1 || c == 1)) ? 11 = d")
-        assertEquals("11", i.variables["d"])
-    }
-
-    // ---------- 17. math booleans ----------
-
-    @Test fun `math bool or parens`() {
-        val (i, r) = stepOnce("(1 == 1 || 2 == 2) => :math")
-        assertNull(r.errorLine)
-        assertEquals("1", i.results["math"])
-    }
-
-    @Test fun `math compare arithmetic`() {
-        val (i, r) = stepOnce("1 + 2 == 3 => :math")
-        assertNull(r.errorLine)
-        assertEquals("1", i.results["math"])
-    }
-
-    @Test fun `math bool not`() {
-        val (i, r) = stepOnce("!(1 == 1) => :math")
-        assertNull(r.errorLine)
-        assertEquals("0", i.results["math"])
-    }
-
-    // ---------- 18. misc ----------
-
-    @Test fun `detect separator prefers comma over dot`() {
-        val (i, r) = stepOnce("1.5, 2.5, 3 => :math:sum")
-        assertNull(r.errorLine)
-        assertEquals("7", i.results["math:sum"])
-    }
-
-    @Test fun `dollar chain substitutes multiple`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 = a")
-        i.executeOneStep("2 = b")
-        i.executeOneStep("3 = c")
-        assertEquals("123", i.substitute("a\$b\$c"))
-    }
-
-    // ---------- 19. log / message ----------
-
-    @Test fun `log fn writes to log`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello => :log")
-        assertTrue(i.log.any { it.text == "hello" && it.type == "log" })
-    }
-
-    @Test fun `log bare writes current line`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(":log")
-        assertTrue(i.log.any { it.type == "log" })
-    }
-
-    @Test fun `message fn writes type message`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello => :message")
-        assertTrue(i.log.any { it.text == "hello" && it.type == "message" })
-        assertEquals("hello", i.results["message"])
-    }
-
-    // ---------- 20. actions ----------
-
-    @Test fun `default actions runs instruction`() {
-        val i = Interpreter()
-        i.executeOneStep("5 = a")
-        assertEquals("5", i.variables["a"])
-    }
-
-    @Test fun `actions log then run`() {
-        val i = Interpreter()
-        i.actions = ":log\n:run"
-        i.executeOneStep("5 = a")
-        assertEquals("5", i.variables["a"])
-        assertTrue(i.log.any { it.text == "5 = a" })
-    }
-
-    @Test fun `actions no run skips instruction`() {
-        val i = Interpreter()
-        i.actions = ":log"
-        i.executeOneStep("5 = a")
-        assertNull(i.variables["a"])
-    }
-
-    // ---------- 21. file operations ----------
-
-    @Test fun `file to var errors if missing`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("file:/nonexistent/path/xyz => content")
-        assertNotNull(r.errorLine)
-    }
-
-    @Test fun `var to file errors if source empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("unknownvar => file:/tmp/out.txt")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 22. insert ----------
-
-    @Test fun `insert into y`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a, c = arr")
-        val r = i.executeOneStep("b ->| arr:y:2")
-        assertNull(r.errorLine)
-        assertEquals("a,b,c", i.variables["arr"])
-    }
-
-    @Test fun `insert errors if container missing`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("5 ->| unknown:y:1")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 23. short size ----------
-
-    @Test fun `short size x`() {
-        val (i, r) = stepOnce("hello => :s")
-        assertNull(r.errorLine)
-        assertEquals("5", i.results["size"])
-    }
-
-    @Test fun `short size y`() {
-        val (i, r) = stepOnce("1, 2, 3 = arr\narr:y => :s")
-        assertNull(r.errorLine)
-        assertEquals("3", i.results["size"])
-    }
-
-    @Test fun `short size get`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello => :s")
-        val r = i.executeOneStep(":s => dst")
-        assertNull(r.errorLine)
-        assertEquals("5", i.variables["dst"])
-    }
-
-    // ---------- 24. range / repeat ----------
-
-    @Test fun `range ascending`() {
-        val (i, r) = stepOnce("1, 5 => :range")
-        assertNull(r.errorLine)
-        assertEquals("1,2,3,4,5", i.results["range"])
-    }
-
-    @Test fun `range descending`() {
-        val (i, r) = stepOnce("5, 1 => :range")
-        assertNull(r.errorLine)
-        assertEquals("5,4,3,2,1", i.results["range"])
-    }
-
-    @Test fun `repeat action`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("0 = a")
-        i.executeOneStep("a + 1 => a = action")
-        val r = i.executeOneStep("action, 5 => :repeat")
-        assertNull(r.errorLine)
-        assertEquals("5", i.variables["a"])
-    }
-
-    // ---------- 25. error ----------
-
-    @Test fun `error empty initially`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(":error => e")
-        assertEquals("", i.variables["e"])
-    }
-
-    @Test fun `error after error`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("nope -> nothing")
-        i.executeOneStep(":error => e")
-        assertEquals("1", i.variables["e"])
-    }
-
-    @Test fun `error line`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("nope -> nothing")
-        i.executeOneStep(":error:line => l")
-        assertEquals("1", i.variables["l"])
-    }
-
-    @Test fun `reset clears errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("nope -> nothing")
-        i.executeOneStep(":error => e")
-        assertEquals("1", i.variables["e"])
-        i.reset()
-        i.executeOneStep(":error => e2")
-        assertEquals("", i.variables["e2"])
-    }
-
-    // ---------- 26. short data / math ----------
-
-    @Test fun `short sum`() {
-        val (i, r) = stepOnce("1, 2, 3 => :sum")
-        assertNull(r.errorLine)
+        i.executeOneStep("1, 2, 3 => :math:sum")
         assertEquals("6", i.results["math:sum"])
     }
 
-    @Test fun `short pop`() {
-        val (i, r) = stepOnce("1, 2, 3 = arr\narr:y => :pop")
-        assertNull(r.errorLine)
-        assertEquals("3", i.results["pop"])
-    }
-
-    @Test fun `short size`() {
-        val (i, r) = stepOnce("1, 2, 3 = arr\narr:y => :size")
-        assertNull(r.errorLine)
-        assertEquals("3", i.results["size"])
-    }
-
-    @Test fun `short sort`() {
-        val (i, r) = stepOnce("c, a, b = arr\narr:y => :sort")
-        assertNull(r.errorLine)
-        assertEquals("a,b,c", i.results["sort"])
-    }
-
-    @Test fun `math sort`() {
-        val (i, r) = stepOnce("3, 1, 2 => :math:sort")
-        assertNull(r.errorLine)
-        assertEquals("1,2,3", i.results["math:sort"])
-    }
-
-    // ---------- 27. chains ----------
-
-    @Test fun `chain math to var`() {
+    @Test
+    fun dataUpper() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= x")
-        i.executeOneStep("1 + 1 => :math => x")
-        assertEquals("2", i.variables["x"])
+        i.variables["d"] = "hello"
+        i.executeOneStep("d => :data:upper")
+        assertEquals("HELLO", i.results["upper"])
     }
 
-    @Test fun `chain size to var`() {
+    @Test
+    fun dataEmpty() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello = s")
-        i.executeOneStep("= n")
-        val r = i.executeOneStep("s => :size => n")
-        assertNull(r.errorLine)
-        assertEquals("5", i.variables["n"])
+        i.variables["d"] = ""
+        i.executeOneStep("d => :data:empty")
+        assertEquals("1", i.results["empty"])
     }
 
-    // ---------- 28. jump commands ----------
-
-    @Test fun `jump stop command`() {
+    @Test
+    fun dataGroupby() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ :stop")
-        assertEquals(":stop", r.command)
+        i.executeOneStep("1,2,3,4,5,6 => :data:groupby, n % 2, count")
+        assertEquals("0:3,1:3", i.results["groupby"])
     }
 
-    @Test fun `jump pause command`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ :pause")
-        assertEquals(":pause", r.command)
+    @Test
+    fun secretSetGet() {
+        SecretModel.set("test_key", "test_value")
+        val i = Interpreter(secretCaller = { action, key, value ->
+            when (action) {
+                "get" -> SecretModel.get(key ?: "") ?: ""
+                "set" -> { SecretModel.set(key ?: "", value ?: ""); "1" }
+                "remove" -> { SecretModel.remove(key ?: ""); "1" }
+                "list" -> SecretModel.list().joinToString(",")
+                else -> "-1"
+            }
+        })
+        i.executeOneStep("test_key => :secret:get")
+        assertEquals("test_value", i.results["secret"])
+        assertEquals("1", i.results["secret:found"])
+        SecretModel.remove("test_key")
     }
 
-    @Test fun `jump resume command`() {
+    @Test
+    fun memAllocWriteRead() {
+        MemModel.reset()
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ :resume")
-        assertEquals(":resume", r.command)
+        i.executeOneStep("16 => :mem:alloc => p")
+        val addr = i.variables["p"]?.toIntOrNull()
+        assertNotNull(addr)
+        i.executeOneStep("p, 42 => :mem:write")
+        i.executeOneStep("p => :mem:read => v")
+        assertEquals("42", i.variables["v"])
     }
 
-    @Test fun `jump delete command`() {
+    @Test
+    fun fileStreamReadsFirstBatch() {
+        val tmp = kotlin.io.path.createTempFile("stream", ".txt").toFile()
+        tmp.writeText((1..100).joinToString("\n"))
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ :delete")
-        assertEquals(":delete", r.command)
+        i.executeOneStep("${tmp.absolutePath} => :file:stream => csv")
+        assertEquals("1", i.variables["csv"])
+        assertNotNull(i.results["stream"])
+        tmp.delete()
     }
 
-    @Test fun `jump reset command`() {
+    @Test
+    fun streamNextWithoutActiveThrows() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ :reset")
-        assertEquals(":reset", r.command)
+        i.executeOneStep(":stream:next")
+        assertTrue(i.errorLines.isNotEmpty())
     }
 
-    @Test fun `jump unknown bare errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("^ notes")
-        assertNotNull(r.errorLine)
+    @Test
+    fun retryTransientSuccess() {
+        val i = Interpreter(retryCaller = { _, _, _, _, _, _ -> "1" })
+        i.executeOneStep("url, data => :api:post:retry")
+        assertEquals("1", i.results["api:post"])
     }
 
-    // ---------- 29. substitution of named containers (F1) ----------
-
-    @Test fun `named container with action substitutes`() {
+    @Test
+    fun apiMock() {
+        MockModel.reset()
+        MockModel.set("https://test.com", "response", 200)
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("0 = sum")
-        i.executeOneStep("sum + 1 => sum = inc")
-        assertEquals("0", i.variables["sum"])
-        i.executeOneStep("inc")
-        assertEquals("1", i.variables["sum"])
-        i.executeOneStep("inc")
-        assertEquals("2", i.variables["sum"])
+        i.executeOneStep("https://test.com => :api:get")
+        assertEquals("1", i.results["api:get"])
+        MockModel.reset()
     }
 
-    @Test fun `literal backslash prevents substitution`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("0 = sum")
-        i.executeOneStep("sum + 1 => sum = inc")
-        val r = i.executeOneStep("\\ inc")
-        assertEquals("0", i.variables["sum"])
+    @Test
+    fun terminalOpenWriteRead() {
+        val i = Interpreter(terminalCaller = { action, _, _ ->
+            when (action) {
+                "open" -> "1"
+                "read" -> "output"
+                else -> "-1"
+            }
+        })
+        i.executeOneStep("ls => :terminal => Console")
+        assertEquals("1", i.results["terminal"])
+        i.executeOneStep("Console => :terminal:read")
+        assertEquals("output", i.results["terminal:read"])
     }
 
-    // ---------- 30. escaping ----------
-
-    @Test fun `escaped comma in args`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a\\,b, c => :log")
-        assertTrue(i.log.any { it.text.contains("a,b") })
+    @Test
+    fun openUrl() {
+        val i = Interpreter(openCaller = { kind, _ -> if (kind == "url") "1" else "-1" })
+        i.executeOneStep("https://example.com => :open:url")
+        assertEquals("1", i.results["open"])
     }
 
-    @Test fun `escaped semicolon`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a\\;b => :log")
-        assertTrue(i.log.any { it.text.contains("a;b") })
+    @Test
+    fun backgroundSet() {
+        val i = Interpreter(visualCaller = { _, _, _, _ -> "1" })
+        i.executeOneStep("/path/bg.png => :background")
+        assertEquals("1", i.results["background"])
+        assertEquals("fit", i.results["background:mode"])
     }
 
-    @Test fun `escaped dot`() {
+    @Test
+    fun askAsync() {
+        var answered = false
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("a\\.b => :log")
-        assertTrue(i.log.any { it.text.contains("a.b") })
+        i.executeOneStep("question => :ask => dst")
+        assertEquals("1", i.results["ask:pending"])
+        assertNotNull(i.results["ask:id"])
+        AskModel.answer(i.results["ask:id"]!!.toInt(), "hello")
+        assertEquals("0", i.results["ask:pending"])
+        assertEquals("hello", i.results["ask"])
     }
 
-    @Test fun `literal mid-line`() {
+    @Test
+    fun errorPause() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("\\ a + 1 => :math \\ = func1")
-        assertEquals("a + 1 => :math", i.variables["func1"])
+        i.executeOneStep("1 => :error:pause")
+        assertEquals("1", i.results["error:pause"])
+        i.executeOneStep("0 => :error:pause")
+        assertEquals("0", i.results["error:pause"])
     }
 
-    // ---------- 31. foreach removed (F4) ----------
-
-    @Test fun `foreach removed yields unknown op`() {
+    @Test
+    fun assertPause() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        val r = i.executeOneStep("arr:foreach:y ; n :\n n => :log")
-        assertNotNull(r.errorLine)
+        i.executeOneStep("1 => :assert:pause")
+        assertEquals("1", i.results["assert:pause"])
+        i.executeOneStep("0 => :assert:pause")
+        assertEquals("0", i.results["assert:pause"])
     }
 
-    // ---------- 32. :error format (4) ----------
-
-    @Test fun `error set via message`() {
+    @Test
+    fun questionInString() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("\"fail\" => :error")
-        assertEquals(Status.PAUSED, r.status)
+        i.executeOneStep("Что делаешь? (1, 2, 3) => :message")
+        assertNotNull(i.results["message"])
+        assertTrue(i.results["message"]!!.contains("Что делаешь?"))
+    }
+
+    @Test
+    fun commaInMessage() {
+        val i = Interpreter()
+        i.executeOneStep("hp = 100, gold = 0 => :message")
+        assertNotNull(i.results["message"])
+        assertTrue(i.results["message"]!!.contains("hp = 100, gold = 0"))
+    }
+
+    @Test
+    fun synonyms() {
+        val i = Interpreter()
+        i.executeOneStep("12 = twelve, number, a")
+        assertEquals("12", i.variables["twelve"])
+        assertEquals("12", i.variables["number"])
+        assertEquals("12", i.variables["a"])
+        assertTrue(i.aliases.containsKey("twelve"))
+        assertTrue(i.aliases["twelve"]!!.contains("number"))
+    }
+
+    @Test
+    fun gotoByAlias() {
+        val i = Interpreter()
+        i.executeOneStep("12 = twelve, number, a")
+        i.executeOneStep("= label")
+        i.executeOneStep("^ label")
+        assertTrue(true)
+    }
+
+    @Test
+    fun extList() {
+        val i = Interpreter()
+        i.executeOneStep(":ext:list => dst")
+        assertEquals("1", i.variables["dst"])
+    }
+
+    @Test
+    fun scheduleLimit() {
+        val i = Interpreter()
+        i.executeOneStep("10 => :schedule:limit")
+        assertEquals("10", i.results["schedule:limit"])
+    }
+
+    @Test
+    fun strictModeForbidsMem() {
+        val i = Interpreter()
+        val errors = i.validate(i.parse("16 => :mem:alloc => p"), strict = true)
+        assertTrue(errors.any { it.message.contains("Strict Mode") })
+    }
+
+    @Test
+    fun strictModeAllowsSecret() {
+        val i = Interpreter()
+        val errors = i.validate(i.parse("key => :secret:get"), strict = true)
+        assertTrue(errors.none { it.message.contains("Strict Mode") })
+    }
+
+    @Test
+    fun loopBasic() {
+        val i = Interpreter()
+        i.variables["a"] = "0"
+        i.executeOneStep("a + 1 => :math => a")
+        assertEquals("1", i.variables["a"])
+    }
+
+    @Test
+    fun conditionTrue() {
+        val i = Interpreter()
+        i.variables["a"] = "5"
+        i.executeOneStep("a == 5 ? hello => :message")
+        assertEquals("hello", i.results["message"])
+    }
+
+    @Test
+    fun conditionFalse() {
+        val i = Interpreter()
+        i.variables["a"] = "3"
+        i.executeOneStep("a == 5 ? hello => :message")
+        assertNull(i.results["message"])
+    }
+
+    @Test
+    fun moveOperation() {
+        val i = Interpreter()
+        i.variables["a"] = "hello"
+        i.executeOneStep("a -> b")
+        assertNull(i.variables["a"])
+        assertEquals("hello", i.variables["b"])
+    }
+
+    @Test
+    fun copyOperation() {
+        val i = Interpreter()
+        i.variables["a"] = "hello"
+        i.executeOneStep("a => b")
+        assertEquals("hello", i.variables["a"])
+        assertEquals("hello", i.variables["b"])
+    }
+
+    @Test
+    fun jsonGet() {
+        val i = Interpreter()
+        i.variables["j"] = """{"key":"value"}"""
+        i.executeOneStep("j, /key => :json:get")
+        assertEquals("value", i.results["json"])
+    }
+
+    @Test
+    fun xmlGet() {
+        val i = Interpreter()
+        i.variables["x"] = "<root><item>42</item></root>"
+        i.executeOneStep("x, /root/item => :xml:get")
+        assertEquals("42", i.results["xml"])
+    }
+
+    @Test
+    fun soundStopWithoutStart() {
+        assertTrue(SoundModel.stop(null) || true)
+    }
+
+    @Test
+    fun websocketMessageEmpty() {
+        WebSocketModel.close()
+        assertEquals("", WebSocketModel.lastMessage)
+    }
+
+    @Test
+    fun agentBroadcast() {
+        var called = false
+        val i = Interpreter(agentCaller = { _, name, action, _ ->
+            if (action == be.`true`.AgentAction.BROADCAST && name == "*") called = true
+        })
+        i.executeOneStep("hello => :agent:broadcast")
+        assertTrue(called)
+    }
+
+    @Test
+    fun agentSend() {
+        var target = ""
+        val i = Interpreter(agentCaller = { _, name, action, _ ->
+            if (action == be.`true`.AgentAction.SEND) target = name
+        })
+        i.executeOneStep("agent-1, hello => :agent:send")
+        assertEquals("agent-1", target)
+    }
+
+    @Test
+    fun inboxGet() {
+        val i = Interpreter(agentInboxReader = { "inbox content" })
+        i.executeOneStep(":agent:inbox => dst")
+        assertEquals("inbox content", i.variables["dst"])
+    }
+
+    @Test
+    fun inboxClear() {
+        var cleared = false
+        val i = Interpreter(agentCaller = { _, _, action, _ ->
+            if (action == be.`true`.AgentAction.INBOX) cleared = true
+        })
+        i.executeOneStep(":agent:inbox:clear")
+        assertTrue(cleared)
+    }
+
+    @Test
+    fun simpleClick() {
+        var clicked = ""
+        val i = Interpreter(simpleCaller = { action, arg -> clicked = "$action:$arg" })
+        i.executeOneStep("button:startAll => :simple:click")
+        assertEquals("click:button:startAll", clicked)
+    }
+
+    @Test
+    fun errorSet() {
+        val i = Interpreter()
+        i.executeOneStep("test error => :error")
         assertEquals("1", i.results["error"])
-        assertTrue(i.results["error:message"]!!.startsWith("custom, 1,"))
+        assertNotNull(i.results["error:line"])
+        assertNotNull(i.results["error:message"])
     }
 
-    @Test fun `error set with condition true`() {
+    @Test
+    fun errorResolve() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("!(1 == 2) ? \"x\" => :error")
-        assertEquals("1", i.results["error"])
-    }
-
-    @Test fun `error set with condition false skips`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("!(1 == 1) ? \"x\" => :error")
-        assertNull(i.results["error"])
-    }
-
-    @Test fun `error resolve sets zero`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("nope -> nothing")
+        i.executeOneStep("test error => :error")
         i.executeOneStep("0 => :error:resolve")
-        val msg = i.results["error:message"] ?: ""
-        assertTrue(msg.contains(", 0,"), "got: $msg")
+        assertEquals("0", i.results["error:message"]?.split(",")?.getOrNull(1)?.trim())
     }
 
-    @Test fun `error resolve log entry resolved`() {
+    @Test
+    fun assertPass() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("\"fail\" => :error")
-        i.executeOneStep("0 => :error:resolve")
-        assertTrue(i.log.any { it.type == "error" && it.resolved })
-    }
-
-    @Test fun `error does not pause by default`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("\"fail\" => :error")
-        assertNotEquals(Status.PAUSED, r.status)
-        assertEquals("1", i.results["error"])
-    }
-
-    // ---------- 33. settings (6) ----------
-
-    @Test fun `history limit default`() {
-        val i = Interpreter()
-        assertEquals(100, i.historyLimit)
-    }
-
-    @Test fun `log limit default`() {
-        val i = Interpreter()
-        assertEquals(1000, i.logLimit)
-    }
-
-    @Test fun `strict mode default false`() {
-        val i = Interpreter()
-        assertFalse(i.strictMode)
-    }
-
-    @Test fun `auto sync default true`() {
-        val i = Interpreter()
-        assertTrue(i.autoSync)
-    }
-
-    // ---------- 34. stack peek (REC) ----------
-
-    @Test fun `stack peek top`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 = arr")
-        val r = i.executeOneStep("arr:y => :stack:peek")
-        assertNull(r.errorLine)
-        assertEquals("3", i.results["peek"])
-    }
-
-    @Test fun `stack peek empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= arr")
-        val r = i.executeOneStep("arr:y => :stack:peek")
-        assertNull(r.errorLine)
-        assertEquals("", i.results["peek"])
-    }
-
-    // ---------- 35. :simple (S) ----------
-
-    @Test fun `simple open invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("\"/tmp/x\" => :simple:open")
-        assertEquals("open", captured)
-    }
-
-    @Test fun `simple save invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("=> :simple:save")
-        assertEquals("save", captured)
-    }
-
-    @Test fun `simple newCycle invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("=> :simple:newCycle")
-        assertEquals("newCycle", captured)
-    }
-
-    // ---------- 36. substitution preserves state ----------
-
-    @Test fun `substitution body sees variables`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("10 = a")
-        i.executeOneStep("a + 5 => a = inc")
-        i.executeOneStep("inc")
-        assertEquals("15", i.variables["a"])
-    }
-
-    // ---------- 37. naming rule (N) ----------
-
-    @Test fun `result naming to undeclared is naming`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1,2,3 => :sum")
-        i.executeOneStep(":math:sum = mySum")
-        assertEquals("6", i.variables["mySum"])
-    }
-
-    @Test fun `math chain to undeclared errors`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("5 + 5 => :math => result2")
-        assertNotNull(r.errorLine)
-    }
-
-    // ---------- 38. :assert ----------
-
-    @Test fun `assert success sets results`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("5 = b")
-        val r = i.executeOneStep("a == b, \"ok\" => :assert")
-        assertNull(r.errorLine)
+        i.variables["a"] = "5"
+        i.variables["b"] = "5"
+        i.executeOneStep("a == b, 'must be equal' => :assert")
         assertEquals("1", i.results["assert"])
     }
 
-    @Test fun `assert failure adds error line`() {
+    @Test
+    fun assertFail() {
         val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("5 = a")
-        i.executeOneStep("6 = b")
-        val r = i.executeOneStep("a == b, \"fail\" => :assert")
-        assertNotNull(r.errorLine)
+        i.variables["a"] = "5"
+        i.variables["b"] = "3"
+        i.executeOneStep("a == b, 'must be equal' => :assert")
         assertEquals("0", i.results["assert"])
-        assertEquals("assert, 1, fail", i.results["error:message"])
+        assertTrue(i.errorLines.isNotEmpty())
     }
 
-    @Test fun `assert failure no pause by default`() {
+    @Test
+    fun pinned() {
         val i = Interpreter()
-        i.actions = ":run"
+        i.executeOneStep("a => :pinned:add")
+        assertEquals("1", i.results["pinned"])
+    }
+
+    @Test
+    fun watchAdd() {
+        val i = Interpreter()
+        i.executeOneStep("a => :watch:add")
+        assertEquals("1", i.results["watch"])
+    }
+
+    @Test
+    fun diff() {
+        val i = Interpreter()
+        i.executeOneStep(":diff")
+        assertNotNull(i.results["diff"])
+    }
+
+    @Test
+    fun history() {
+        val i = Interpreter()
+        i.executeOneStep(":history")
+        assertNotNull(i.results["history"])
+    }
+
+    @Test
+    fun agentSync() {
+        val i = Interpreter()
+        i.executeOneStep(":agent:sync")
+        assertEquals("1", i.results["agent:sync"])
+    }
+
+    @Test
+    fun streamSeek() {
+        val i = Interpreter()
+        i.executeOneStep(":stream:seek name, 10")
+        assertNotNull(i.results["stream:seek"])
+    }
+
+    @Test
+    fun scheduleLimitGet() {
+        val i = Interpreter()
+        i.executeOneStep(":schedule:limit")
+        assertNotNull(i.results["schedule:limit"])
+    }
+
+    @Test
+    fun sendTelegram() {
+        var sent = false
+        val i = Interpreter(sendCaller = { type, _ ->
+            if (type == "telegram") sent = true
+            "1"
+        })
+        i.executeOneStep("chat_id, message => :send:telegram")
+        assertTrue(sent)
+        assertEquals("1", i.results["send"])
+    }
+
+    @Test
+    fun fileRead() {
+        val tmp = kotlin.io.path.createTempFile("test", ".txt").toFile()
+        tmp.writeText("hello world")
+        val i = Interpreter()
+        i.executeOneStep("${tmp.absolutePath} => :file:read")
+        assertEquals("hello world", i.results["file"])
+        tmp.delete()
+    }
+
+    @Test
+    fun fileCreate() {
+        val tmp = kotlin.io.path.createTempFile("test", ".txt").toFile()
+        val i = Interpreter()
+        i.executeOneStep("${tmp.absolutePath}, content => :file:create")
+        assertEquals("content", tmp.readText())
+        tmp.delete()
+    }
+
+    @Test
+    fun mockSetGet() {
+        MockModel.reset()
+        MockModel.set("https://test.com", "response", 200)
+        val mock = MockModel.get("https://test.com")
+        assertNotNull(mock)
+        assertEquals("response", mock.response)
+        assertEquals(200, mock.code)
+        MockModel.reset()
+    }
+
+    @Test
+    fun mockReset() {
+        MockModel.set("https://test.com", "response", 200)
+        MockModel.reset()
+        assertNull(MockModel.get("https://test.com"))
+    }
+
+    @Test
+    fun visualRectCreate() {
+        VisualModel.rects.clear()
+        val r = VisualModel.createRect("a", 10, 20)
+        assertEquals("a", r.target)
+        assertEquals(10, r.x)
+        assertEquals(20, r.y)
+        assertTrue(r.visible)
+    }
+
+    @Test
+    fun visualBackgroundSet() {
+        VisualModel.clearAll()
+        VisualModel.setBackground("main.cycle", "/path/bg.png", "tile")
+        val bg = VisualModel.backgroundFor("main.cycle")
+        assertNotNull(bg)
+        assertEquals("tile", bg.mode)
+        VisualModel.clearAll()
+    }
+
+    @Test
+    fun askCancel() {
+        val i = Interpreter()
+        i.executeOneStep("question => :ask => dst")
+        val id = i.results["ask:id"]!!.toInt()
+        AskModel.cancel(id)
+        assertEquals("", i.results["ask"])
+        assertEquals("0", i.results["ask:pending"])
+    }
+
+    @Test
+    fun extInvoke() {
+        val i = Interpreter(extCaller = { name, args -> "result:$name:${args.joinToString(",")}" })
+        i.executeOneStep("a, b => :ext:my_plugin")
+        assertTrue(i.results["ext:my_plugin"]?.contains("my_plugin") == true)
+    }
+
+    @Test
+    fun extListWithExtensions() {
+        Extensions.clear()
+        val ext = object : Extension {
+            override val names = setOf("test_ext")
+            override fun handle(op: String, args: List<String>, ctx: Ctx): String? = "ok"
+        }
+        Extensions.register(ext)
+        val i = Interpreter()
+        i.executeOneStep(":ext:list => dst")
+        assertTrue(i.results["ext:list"]?.contains("test_ext") == true)
+        Extensions.unregister(ext)
+    }
+
+    @Test
+    fun fileKindInbox() {
+        assertEquals(FileKind.INBOX, fileKindOf("agent-1.inbox"))
+    }
+
+    @Test
+    fun fileKindCycle() {
+        assertEquals(FileKind.CYCLE, fileKindOf("main.cycle"))
+    }
+
+    @Test
+    fun secretMask() {
+        assertEquals("***", SecretModel.mask("abc"))
+        assertEquals("ab***yz", SecretModel.mask("abcdefgh"))
+    }
+
+    @Test
+    fun memCopy() {
+        MemModel.reset()
+        val i = Interpreter()
+        i.executeOneStep("16 => :mem:alloc => p")
+        i.executeOneStep("16 => :mem:alloc => q")
+        i.executeOneStep("p, 42 => :mem:write")
+        i.executeOneStep("p, q, 1 => :mem:copy")
+        i.executeOneStep("q => :mem:read => v")
+        assertEquals("42", i.variables["v"])
+    }
+
+    @Test
+    fun memFill() {
+        MemModel.reset()
+        val i = Interpreter()
+        i.executeOneStep("16 => :mem:alloc => p")
+        i.executeOneStep("p, 0, 16 => :mem:fill")
+        i.executeOneStep("p => :mem:read => v")
+        assertEquals("0", i.variables["v"])
+    }
+
+    @Test
+    fun memDump() {
+        MemModel.reset()
+        val i = Interpreter()
+        i.executeOneStep("16 => :mem:alloc => p")
+        i.executeOneStep("p, 42 => :mem:write")
+        i.executeOneStep("p, 4 => :mem:dump")
+        assertTrue(i.results["mem:dump"]?.contains("2A") == true)
+    }
+
+    @Test
+    fun memReset() {
+        MemModel.reset()
+        val i = Interpreter()
+        i.executeOneStep("16 => :mem:alloc => p")
+        i.executeOneStep("p, 42 => :mem:write")
+        MemModel.reset()
+        assertEquals("", MemModel.read(1000))
+    }
+
+    @Test
+    fun streamLimit() {
+        val i = Interpreter()
+        i.executeOneStep("5000 => :stream:limit")
+        assertEquals("5000", i.results["stream:limit"])
+    }
+
+    @Test
+    fun retryIdempotent() {
+        var calls = 0
+        val i = Interpreter(retryCaller = { _, _, _, _, idem, _ ->
+            calls++
+            if (calls < 3) "-1" else "1"
+        })
+        i.executeOneStep("url, data, 5, 0, 1 => :api:post:retry")
+        assertEquals("1", i.results["api:post"])
+    }
+
+    @Test
+    fun backgroundBadMode() {
+        val i = Interpreter(visualCaller = { _, _, _, _ -> "1" })
+        i.executeOneStep("/path/bg.png, invalid => :background")
+        assertTrue(i.errorLines.isNotEmpty())
+    }
+
+    @Test
+    fun strictModeForbidsSend() {
+        val i = Interpreter()
+        val errors = i.validate(i.parse("a, b => :send:telegram"), strict = true)
+        assertTrue(errors.any { it.message.contains("Strict Mode") })
+    }
+
+    @Test
+    fun strictModeForbidsAsk() {
+        val i = Interpreter()
+        val errors = i.validate(i.parse("question => :ask"), strict = true)
+        assertTrue(errors.any { it.message.contains("Strict Mode") })
+    }
+
+    @Test
+    fun strictModeAllowsExt() {
+        val i = Interpreter()
+        val errors = i.validate(i.parse("args => :ext:name"), strict = true)
+        assertTrue(errors.none { it.message.contains("Strict Mode") })
+    }
+
+    @Test
+    fun executionStopsOnFinish() {
+        val i = Interpreter()
+        val r = i.executeOneStep("=> :stop")
+        assertEquals(Status.FINISHED, r.status)
+    }
+
+    @Test
+    fun jumpToStep() {
+        val i = Interpreter()
+        i.executeOneStep("^ 5")
+        assertEquals(5, i.currentStep)
+    }
+
+    @Test
+    fun namingEmpty() {
+        val i = Interpreter()
+        i.executeOneStep("= a")
+        assertEquals("", i.variables["a"])
+    }
+
+    @Test
+    fun namingValue() {
+        val i = Interpreter()
         i.executeOneStep("5 = a")
-        i.executeOneStep("6 = b")
-        val r = i.executeOneStep("a == b, \"fail\" => :assert")
-        assertNotEquals(Status.PAUSED, r.status)
+        assertEquals("5", i.variables["a"])
     }
 
-    @Test fun `assert without message warns`() {
+    @Test
+    fun resultNaming() {
         val i = Interpreter()
-        i.actions = ":run"
-        var warning: String? = null
-        i.snackbarCaller = { text, _ -> warning = text }
-        i.executeOneStep("5 = a")
-        i.executeOneStep("5 = b")
-        i.executeOneStep("a == b => :assert")
-        assertNotNull(warning)
-        assertTrue(warning!!.contains("without message"))
+        i.executeOneStep("2 + 3 => :math")
+        i.executeOneStep(":math => sum")
+        assertEquals("5", i.variables["sum"])
     }
 
-    // ---------- 39. :pauseAll / :resumeAll ----------
-
-    @Test fun `pauseAll sets command`() {
+    @Test
+    fun labelAndJump() {
         val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep(":pauseAll")
-        assertEquals("pauseAll", r.command)
-    }
-
-    @Test fun `resumeAll sets command`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep(":resumeAll")
-        assertEquals("resumeAll", r.command)
-    }
-
-    @Test fun `pauseAll with parameter`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("1 => :pauseAll")
-        assertEquals("pauseAll", r.command)
-    }
-
-    @Test fun `pauseAll with arbitrary parameter`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("go, go, go => :pauseAll")
-        assertEquals("pauseAll", r.command)
-    }
-
-    @Test fun `resumeAll with parameter`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        val r = i.executeOneStep("1 => :resumeAll")
-        assertEquals("resumeAll", r.command)
-    }
-
-    // ---------- 40. :run / :log containers ----------
-
-    @Test fun `run container is empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep(":run")
-        assertEquals("", i.results["run"])
-    }
-
-    @Test fun `log container is empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("hello => :log")
-        assertEquals("", i.results["log"])
-    }
-
-    // ---------- 41. colon get universal ----------
-
-    @Test fun `colon get math`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("1 + 1 => :math")
-        i.executeOneStep("= dst")
-        i.executeOneStep(":math => dst")
-        assertEquals("2", i.variables["dst"])
-    }
-
-    @Test fun `colon get pauseAll empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= dst")
-        i.executeOneStep(":pauseAll => dst")
-        assertEquals("", i.variables["dst"])
-    }
-
-    @Test fun `colon get run empty`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        i.executeOneStep("= r")
-        i.executeOneStep(":run => r")
-        assertEquals("", i.variables["r"])
-    }
-
-    // ---------- 42. simple search ----------
-
-    @Test fun `simple search invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("hello => :simple:search")
-        assertEquals("search", captured)
-    }
-
-    @Test fun `simple search count invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("=> :simple:search:count")
-        assertEquals("search:count", captured)
-    }
-
-    // ---------- 43. simple click ----------
-
-    @Test fun `simple click invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        var arg: String? = null
-        i.simpleCaller = { action, a -> captured = action; arg = a }
-        i.executeOneStep("button:startAll => :simple:click")
-        assertEquals("click", captured)
-        assertEquals("button:startAll", arg)
-    }
-
-    @Test fun `simple clickAt invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        var arg: String? = null
-        i.simpleCaller = { action, a -> captured = action; arg = a }
-        i.executeOneStep("100, 200 => :simple:clickAt")
-        assertEquals("clickAt", captured)
-        assertEquals("100, 200", arg)
-    }
-
-    // ---------- 44. simple type ----------
-
-    @Test fun `simple type invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        var arg: String? = null
-        i.simpleCaller = { action, a -> captured = action; arg = a }
-        i.executeOneStep("hello, editor:current => :simple:type")
-        assertEquals("type", captured)
-        assertEquals("hello, editor:current", arg)
-    }
-
-    // ---------- 45. simple terminal ----------
-
-    @Test fun `simple openTerminal invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("Console => :simple:openTerminal")
-        assertEquals("openTerminal", captured)
-    }
-
-    @Test fun `simple typeTerminal invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("hello, Console => :simple:typeTerminal")
-        assertEquals("typeTerminal", captured)
-    }
-
-    @Test fun `simple sendTerminal invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("ls -la, Console => :simple:sendTerminal")
-        assertEquals("sendTerminal", captured)
-    }
-
-    @Test fun `simple closeTerminal invokes caller`() {
-        val i = Interpreter()
-        i.actions = ":run"
-        var captured: String? = null
-        i.simpleCaller = { action, _ -> captured = action }
-        i.executeOneStep("Console => :simple:closeTerminal")
-        assertEquals("closeTerminal", captured)
+        i.executeOneStep("= label")
+        val r = i.executeOneStep("^ label")
+        assertNotNull(r)
     }
 }

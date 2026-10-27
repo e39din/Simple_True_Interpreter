@@ -11,20 +11,30 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Robot
 import java.awt.event.InputEvent
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.util.Properties
+import javax.mail.Message
+import javax.mail.Session
+import javax.mail.Transport
+import javax.mail.internet.InternetAddress
+import javax.mail.internet.MimeMessage
 import javax.swing.JFileChooser
 
 class MainScreenSystem(private val app: MainScreenApp) {
     private var autoSaveJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Default)
-    private val agentJobs = mutableMapOf<Int, Job>()
+    private val columnJobs = mutableMapOf<String, Job>()
     private val agentDeferred = mutableMapOf<Int, CompletableDeferred<String>>()
 
     private val baseDir: File
@@ -74,6 +84,9 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 Substrate.fileOrder = Substrate.fileOrder.filter { it in existing } +
                         (existing - Substrate.fileOrder.toSet())
             }
+            if (!File(baseDir, "settings.true").exists()) {
+                Substrate.showTemplatePicker = true
+            }
         } catch (e: Exception) {
             Substrate.log("Init failed: ${e.message}")
             app.applyDefault()
@@ -82,7 +95,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun loadSettings() {
         try {
-            val f = File(baseDir, "settings.txt")
+            val f = File(baseDir, "settings.true")
             if (!f.exists()) return
             for (l in f.readLines()) {
                 val kv = l.split("=", limit = 2)
@@ -97,6 +110,11 @@ class MainScreenSystem(private val app: MainScreenApp) {
                     "actionsWidth" -> Substrate.actionsWidthOverride = kv[1].trim().toFloatOrNull()?.dp
                     "logHeight" -> Substrate.logHeightOverride = kv[1].trim().toFloatOrNull()?.dp
                     "fileOrder" -> Substrate.fileOrder = kv[1].trim().split(",").filter { it.isNotBlank() }
+                    "recentProjects" -> Substrate.recentProjects = kv[1].trim().split(",").filter { it.isNotBlank() }
+                    "pinned" -> {
+                        Substrate.pinnedList.clear()
+                        kv[1].trim().split(",").filter { it.isNotBlank() }.forEach { Substrate.pinnedList.add(it) }
+                    }
                     "lang" -> Strings.lang = kv[1].trim()
                 }
             }
@@ -106,7 +124,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
     fun saveSettings() {
         try {
             val activeAgent = app.viewingAgent()
-            File(baseDir, "settings.txt").writeText(
+            File(baseDir, "settings.true").writeText(
                 "autoSyncDeclarations=${Substrate.autoSyncDeclarations}\n" +
                         "speedMs=${Substrate.speedMs}\n" +
                         "historyLimit=${activeAgent?.interpreter?.historyLimit ?: 100}\n" +
@@ -117,6 +135,8 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         "actionsWidth=${Substrate.actionsWidthOverride?.value ?: ""}\n" +
                         "logHeight=${Substrate.logHeightOverride?.value ?: ""}\n" +
                         "fileOrder=${Substrate.fileOrder.joinToString(",")}\n" +
+                        "recentProjects=${Substrate.recentProjects.joinToString(",")}\n" +
+                        "pinned=${Substrate.pinnedList.joinToString(",")}\n" +
                         "lang=${Strings.lang}\n"
             )
         } catch (_: Exception) {}
@@ -124,7 +144,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun loadProgress() {
         try {
-            val f = File(baseDir, "progress.txt")
+            val f = File(baseDir, "progress.true")
             if (!f.exists()) return
             Substrate.completedSamples = f.readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         } catch (_: Exception) {}
@@ -132,7 +152,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun saveProgress() {
         try {
-            File(baseDir, "progress.txt").writeText(Substrate.completedSamples.joinToString("\n"))
+            File(baseDir, "progress.true").writeText(Substrate.completedSamples.joinToString("\n"))
         } catch (_: Exception) {}
     }
 
@@ -165,7 +185,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
         while (TabsModel.byFileName("tab$n.cycle") != null) n++
         val interp = app.newInterpreter()
         TabsModel.create("tab$n.cycle", Substrate.startCode, interpreter = interp)
-        app.ensureAgentFor("tab$n.cycle")
         Substrate.addFileToOrder("tab$n.cycle")
         app.publishActive()
     }
@@ -203,21 +222,23 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun openFolder(dir: File) {
         projectDir = dir
+        Substrate.addRecentProject(dir.absolutePath)
+        saveSettings()
         val files = dir.listFiles { f -> f.isFile }?.sortedBy { it.name } ?: emptyList()
         if (files.isEmpty()) { Substrate.log("No files in ${dir.name}"); return }
         TabsModel.tabs.clear()
         AgentsModel.agents.clear()
+        VisualModel.clearAll()
         Substrate.viewingAgentId = null
         Substrate.fileOrder = emptyList()
         val main = files.firstOrNull { it.name == "main.cycle" } ?: files.first()
         val interp0 = app.newInterpreter()
         TabsModel.create(main.name, main.readText(), interpreter = interp0)
-        app.ensureAgentFor(main.name)
+        if (main.name == "main.cycle") app.ensureAgentFor(main.name)
         Substrate.addFileToOrder(main.name)
         files.filter { it != main }.forEach {
             val i = app.newInterpreter()
             TabsModel.create(it.name, it.readText(), makeActive = false, interpreter = i)
-            app.ensureAgentFor(it.name)
             Substrate.addFileToOrder(it.name)
         }
         app.publishActive()
@@ -240,7 +261,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
         if (content.isNullOrBlank()) { Substrate.log("Open failed: ${file.name}"); return }
         val interp = app.newInterpreter()
         TabsModel.open(file.name, content, interp)
-        app.ensureAgentFor(file.name)
+        if (file.name == "main.cycle") app.ensureAgentFor(file.name)
         Substrate.addFileToOrder(file.name)
         pushRecent(file.name)
         app.publishActive()
@@ -314,14 +335,39 @@ class MainScreenSystem(private val app: MainScreenApp) {
         if (Substrate.recentFiles.isEmpty() && files.isNotEmpty()) Substrate.recentFiles = files.take(10)
     }
 
+    fun loadTemplate(templateId: String) {
+        val template = Substrate.templates.firstOrNull { it.id == templateId } ?: return
+        val tab = TabsModel.tabs.firstOrNull { it.fileName == template.fileName }
+        if (tab != null) {
+            app.setActiveFile(template.fileName)
+            return
+        }
+        val interp = app.newInterpreter()
+        TabsModel.create(template.fileName, template.code, interpreter = interp)
+        if (template.fileName == "main.cycle") app.ensureAgentFor(template.fileName)
+        Substrate.addFileToOrder(template.fileName)
+        if (template.id == "cave") {
+            val ending = TabsModel.tabs.firstOrNull { it.fileName == "ending.cycle" }
+            if (ending == null) {
+                val endingInterp = app.newInterpreter()
+                TabsModel.create("ending.cycle", Substrate.TEMPLATE_ENDING, makeActive = false, interpreter = endingInterp)
+                Substrate.addFileToOrder("ending.cycle")
+            }
+        }
+        Substrate.showTemplatePicker = false
+        saveSettings()
+        app.publishActive()
+        Substrate.log("Template '${template.title}' opened")
+    }
+
     // ---------- agents ----------
 
     fun startAgent(agentId: Int) {
         val agent = AgentsModel.byId(agentId) ?: return
-        val tab = TabsModel.byFileName(agent.fileName) ?: return
-        agentJobs[agentId]?.cancel()
+        val fileName = agent.fileName
+        columnJobs[fileName]?.cancel()
         agent.status = Status.RUNNING
-        agentJobs[agentId] = scope.launch {
+        columnJobs[fileName] = scope.launch {
             while (isActive) {
                 agent.interpreter.variables["speed"]?.toLongOrNull()?.let {
                     agent.speedMs = it.coerceIn(0L, 5000L)
@@ -330,14 +376,14 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 if (w != null) {
                     val waitMs = w - System.currentTimeMillis()
                     if (waitMs > 0) {
-                        agent.status = Status.PAUSED
+                        withContext(Dispatchers.Main) { agent.status = Status.PAUSED }
                         delay(waitMs)
                         continue
                     }
                     agent.interpreter.waitUntilMs = null
                     agent.interpreter.timeoutMs = null
                     agent.interpreter.setStatusPublic(Status.RUNNING)
-                    agent.status = Status.RUNNING
+                    withContext(Dispatchers.Main) { agent.status = Status.RUNNING }
                 }
                 if (agent.status != Status.RUNNING) break
                 val r = app.stepAgentInternal(agent.id) ?: break
@@ -352,28 +398,29 @@ class MainScreenSystem(private val app: MainScreenApp) {
             agent.interpreter.waitUntilMs = null
             agent.interpreter.timeoutMs = null
             if (agent.waiter) {
-                agent.status = Status.PAUSED
+                withContext(Dispatchers.Main) { agent.status = Status.PAUSED }
             }
         }
     }
 
     fun pauseAgent(agentId: Int) {
         val agent = AgentsModel.byId(agentId) ?: return
-        agentJobs[agentId]?.cancel()
-        agentJobs.remove(agentId)
+        columnJobs[agent.fileName]?.cancel()
+        columnJobs.remove(agent.fileName)
         agent.status = Status.PAUSED
         agent.lastPressed = "pause"
     }
 
     fun stopAgent(agentId: Int) {
         val agent = AgentsModel.byId(agentId) ?: return
-        agentJobs[agentId]?.cancel()
-        agentJobs.remove(agentId)
+        columnJobs[agent.fileName]?.cancel()
+        columnJobs.remove(agent.fileName)
         agent.interpreter.waitUntilMs = null
         agent.interpreter.timeoutMs = null
         agent.interpreter.setStatusPublic(Status.STOPPED)
         agent.status = Status.STOPPED
         agent.lastPressed = "stop"
+        ScheduleModel.stop(agent)
     }
 
     fun startAllAgents() { AgentsModel.agents.forEach { startAgent(it.id) } }
@@ -433,12 +480,56 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 a.interpreter.results[dst] = if (a.waiter) "1" else "0"
             }
             AgentAction.WAIT -> {
-                val a = AgentsModel.byName(name) ?: AgentsModel.byId(callerId)
+                val a = if (name == "*wait") AgentsModel.byId(callerId) else AgentsModel.byName(name)
                 if (a != null && a.status == Status.PAUSED && a.interpreter.waitUntilMs != null) {
                     startAgent(a.id)
                 }
             }
+            AgentAction.BROADCAST -> {
+                val msg = arg ?: return
+                val caller = AgentsModel.byId(callerId) ?: return
+                AgentsModel.agents.forEach { agent ->
+                    if (agent.id != callerId) appendToInbox(agent, msg, caller.name)
+                }
+            }
+            AgentAction.SEND -> {
+                val msg = arg ?: return
+                val target = AgentsModel.byName(name) ?: run {
+                    Substrate.log("Send failed: agent '$name' not found"); return
+                }
+                val caller = AgentsModel.byId(callerId) ?: return
+                appendToInbox(target, msg, caller.name)
+            }
+            AgentAction.INBOX -> {
+                val caller = AgentsModel.byId(callerId) ?: return
+                val file = projectDir?.let { File(it, caller.inboxFileName) }
+                    ?: File(baseDir, caller.inboxFileName)
+                if (file.exists()) file.writeText("")
+                caller.unreadCount = 0
+                app.publishActive()
+            }
         }
+    }
+
+    private fun appendToInbox(agent: AgentState, msg: String, from: String) {
+        val file = projectDir?.let { File(it, agent.inboxFileName) }
+            ?: File(baseDir, agent.inboxFileName)
+        val line = "[${java.time.Instant.now()}] [$from] $msg\n"
+        try {
+            file.appendText(line)
+        } catch (e: Exception) {
+            Substrate.log("Inbox write failed: ${e.message}")
+            return
+        }
+        agent.unreadCount++
+        Substrate.log("Inbox ${agent.name} ← $from: ${msg.take(40)}")
+    }
+
+    fun readInbox(agentId: Int): String {
+        val agent = AgentsModel.byId(agentId) ?: return ""
+        val file = projectDir?.let { File(it, agent.inboxFileName) }
+            ?: File(baseDir, agent.inboxFileName)
+        return if (file.exists()) try { file.readText() } catch (_: Exception) { "" } else ""
     }
 
     fun switchAgentFile(agent: AgentState, target: String): Boolean {
@@ -449,7 +540,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
             )
             agent.interpreter.results["error"] = "occupied"
             agent.interpreter.results["error:message"] = "occupied, 1, target=$target, agent=${occupying.name}"
-            agent.status = Status.PAUSED
             return false
         }
         val tab = TabsModel.byFileName(target) ?: run {
@@ -457,11 +547,12 @@ class MainScreenSystem(private val app: MainScreenApp) {
             if (!file.exists()) { Substrate.log("File not found: $target"); return false }
             val interp = app.newInterpreter()
             TabsModel.create(target, file.readText(), interpreter = interp)
-            app.ensureAgentFor(target)
             Substrate.addFileToOrder(target)
             TabsModel.byFileName(target)
         } ?: return false
 
+        columnJobs[agent.fileName]?.cancel()
+        columnJobs.remove(agent.fileName)
         agent.fileName = target
         agent.currentStep = 1
         Substrate.log("Agent ${agent.name} → $target")
@@ -471,11 +562,12 @@ class MainScreenSystem(private val app: MainScreenApp) {
 
     fun deleteFileCascade(fileName: String) {
         AgentsModel.agentFor(fileName)?.let { agent ->
-            agentJobs[agent.id]?.cancel()
-            agentJobs.remove(agent.id)
+            columnJobs[fileName]?.cancel()
+            columnJobs.remove(fileName)
             agentDeferred.remove(agent.id)
             AgentsModel.remove(agent.id)
         }
+        VisualModel.clear(fileName)
         TabsModel.closeByName(fileName)
         Substrate.removeFileFromOrder(fileName)
         if (Substrate.expandedFileName == fileName) Substrate.expandedFileName = null
@@ -536,8 +628,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
         deferred.complete(value)
     }
 
-    // ---------- file order ----------
-
     fun moveFileUp(fileName: String) {
         Substrate.moveFileUp(fileName)
         saveSettings()
@@ -550,7 +640,275 @@ class MainScreenSystem(private val app: MainScreenApp) {
         app.publishActive()
     }
 
-    // ---------- :simple ----------
+    // ---------- stream ----------
+
+    fun streamAction(action: String, name: String?, arg: String?): String {
+        val agent = app.viewingAgent() ?: return "-1"
+        return when (action) {
+            "next" -> {
+                val key = name ?: agent.interpreter.results["stream:current"] ?: return "-1"
+                val state = agent.interpreter.streams[key] ?: return "-1"
+                if (state.status != "1") return "0"
+                val out = mutableListOf<String>()
+                try {
+                    while (out.size < state.limit) {
+                        val line = state.reader.readLine() ?: break
+                        out += line
+                    }
+                    if (out.size < state.limit) state.status = "0"
+                } catch (_: Exception) { state.status = "0" }
+                agent.interpreter.results["stream"] = out.joinToString("\n")
+                agent.interpreter.results["stream:status"] = state.status
+                return state.status
+            }
+            "close" -> {
+                if (name != null) {
+                    val st = agent.interpreter.streams.remove(name)
+                    try { st?.reader?.close() } catch (_: Exception) {}
+                } else {
+                    agent.interpreter.streams.values.forEach { try { it.reader.close() } catch (_: Exception) {} }
+                    agent.interpreter.streams.clear()
+                }
+                "1"
+            }
+            "list" -> {
+                agent.interpreter.streams.entries.joinToString(",") { "${it.key}:${it.value.status}" }
+            }
+            else -> "-1"
+        }
+    }
+
+    fun secretAction(action: String, key: String?, value: String?): String {
+        return when (action) {
+            "get" -> if (key != null) (SecretModel.get(key) ?: "") else ""
+            "set" -> if (key != null && value != null) { SecretModel.set(key, value); "1" } else "-1"
+            "remove" -> if (key != null) { SecretModel.remove(key); "1" } else "-1"
+            "list" -> SecretModel.list().joinToString(",")
+            else -> "-1"
+        }
+    }
+
+    fun sendAction(type: String, args: List<String>): String {
+        return try {
+            when (type) {
+                "telegram" -> {
+                    val token = SecretModel.get("telegram_token") ?: return "-1"
+                    val chatId = args.getOrNull(0) ?: return "-1"
+                    val message = args.getOrNull(1) ?: return "-1"
+                    val url = "https://api.telegram.org/bot$token/sendMessage"
+                    val body = "chat_id=$chatId&text=${java.net.URLEncoder.encode(message, "UTF-8")}"
+                    val (code, _) = ServerApi.request("POST", url, body, mapOf(
+                        "Content-Type" to "application/x-www-form-urlencoded"))
+                    if (code in 200..299) "1" else "-1"
+                }
+                "max" -> {
+                    val token = SecretModel.get("max_token") ?: return "-1"
+                    val chatId = args.getOrNull(0) ?: return "-1"
+                    val message = args.getOrNull(1) ?: return "-1"
+                    val url = "https://platform-api2.max.ru/messages"
+                    val body = """{"chat_id":"$chatId","text":"${message.replace("\"", "\\\"")}"}"""
+                    val (code, _) = ServerApi.request("POST", url, body, mapOf(
+                        "Authorization" to token,
+                        "Content-Type" to "application/json"))
+                    if (code in 200..299) "1" else "-1"
+                }
+                "email" -> {
+                    val to = args.getOrNull(0) ?: return "-1"
+                    val subject = args.getOrNull(1) ?: return "-1"
+                    val body = args.getOrNull(2) ?: return "-1"
+                    val host = SecretModel.get("smtp_host") ?: return "-1"
+                    val port = SecretModel.get("smtp_port")?.toIntOrNull() ?: 587
+                    val user = SecretModel.get("smtp_user") ?: return "-1"
+                    val pass = SecretModel.get("smtp_pass") ?: return "-1"
+                    val props = Properties().apply {
+                        put("mail.smtp.host", host)
+                        put("mail.smtp.port", port.toString())
+                        put("mail.smtp.auth", "true")
+                        put("mail.smtp.starttls.enable", "true")
+                    }
+                    val session = Session.getInstance(props, object : javax.mail.Authenticator() {
+                        override fun getPasswordAuthentication() =
+                            javax.mail.PasswordAuthentication(user, pass)
+                    })
+                    val msg = MimeMessage(session).apply {
+                        setFrom(InternetAddress(user))
+                        setRecipients(Message.RecipientType.TO, InternetAddress.parse(to))
+                        this.subject = subject
+                        setText(body)
+                    }
+                    Transport.send(msg)
+                    "1"
+                }
+                else -> "-1"
+            }
+        } catch (e: Exception) {
+            Substrate.log("Send $type failed: ${e.message}")
+            "-1"
+        }
+    }
+
+    fun scheduleAction(action: String, a1: String?, a2: String?, a3: String?): String {
+        val agent = app.viewingAgent() ?: return "-1"
+        return when (action) {
+            "schedule" -> {
+                if (a1 == null || a2 == null) return "-1"
+                if (ScheduleModel.schedule(agent, a1, a2, scope, a3)) "1" else "-1"
+            }
+            "list" -> ScheduleModel.list(agent).joinToString(",") { "${it.id}:${it.cronExpr}:${it.actionName}" }
+            "stop" -> {
+                val id = a1?.toIntOrNull()
+                ScheduleModel.stop(agent, id)
+                "1"
+            }
+            "limit" -> {
+                if (a1 == null) agent.scheduleLimit.toString()
+                else { agent.scheduleLimit = a1.toIntOrNull()?.coerceIn(1, 100) ?: 10; "1" }
+            }
+            else -> "-1"
+        }
+    }
+
+    fun soundAction(action: String, path: String?): String {
+        return when (action) {
+            "play" -> if (path != null) (if (SoundModel.play(path)) "1" else "-1") else "-1"
+            "stop" -> if (SoundModel.stop(path)) "1" else "-1"
+            else -> "-1"
+        }
+    }
+
+    fun websocketAction(action: String, arg: String?): String {
+        return when (action) {
+            "listen" -> {
+                val port = arg?.toIntOrNull() ?: return "-1"
+                if (WebSocketModel.listen(port)) "1" else "-1"
+            }
+            "send" -> if (arg != null) (if (WebSocketModel.send(arg)) "1" else "-1") else "-1"
+            "message" -> WebSocketModel.lastMessage
+            "clients" -> WebSocketModel.clients.joinToString(",")
+            "close" -> { WebSocketModel.close(); "1" }
+            else -> "-1"
+        }
+    }
+
+    fun retryAction(url: String, data: String, count: Int, delayMs: Int, idempotent: Int, op: String): String {
+        val method = when (op) {
+            "get" -> "GET"; "post" -> "POST"; "put" -> "PUT"
+            "delete" -> "DELETE"; "patch" -> "PATCH"
+            else -> return "-1"
+        }
+        val isIdempotent = idempotent == 1 || method == "GET" || method == "DELETE"
+        if (method == "POST" && idempotent == 0) {
+            Substrate.log("retry on non-idempotent POST — may duplicate")
+        }
+        val mock = MockModel.get(url)
+        if (mock != null) {
+            return if (mock.code in 200..299) "1" else "-1"
+        }
+        var attempts = 0        val maxCount = count.coerceIn(1, 10)
+        val waitMs = delayMs.coerceIn(0, 30000)
+        while (attempts < maxCount) {
+            attempts++
+            try {
+                val (code, _) = ServerApi.request(method, url, if (method == "GET" || method == "DELETE") null else data, emptyMap())
+                if (code in 200..299) return "1"
+                if (code in 400..499) return "-1"
+                if (code in 500..599 && isIdempotent && attempts < maxCount) {
+                    Thread.sleep(waitMs.toLong())
+                    continue
+                }
+                return "-1"
+            } catch (e: java.io.IOException) {
+                if (isIdempotent && attempts < maxCount) {
+                    Thread.sleep(waitMs.toLong())
+                    continue
+                }
+                return "-1"
+            } catch (e: Exception) {
+                return "-1"
+            }
+        }
+        return "-1"
+    }
+
+    fun terminalAction(action: String, a1: String?, a2: String?): String {
+        return when (action) {
+            "open" -> {
+                val command = a1 ?: return "-1"
+                val title = a2 ?: "Console"
+                val session = TerminalModel.open(title, scope) ?: return "-1"
+                if (command.isNotBlank()) {
+                    TerminalModel.write(title, command + "\n")
+                }
+                "1"
+            }
+            "write" -> {
+                val text = a1 ?: return "-1"
+                val title = a2 ?: "Console"
+                if (TerminalModel.write(title, text)) "1" else "-1"
+            }
+            "read" -> {
+                val title = a1 ?: "Console"
+                TerminalModel.read(title)
+            }
+            "close" -> {
+                val title = a1 ?: return "-1"
+                TerminalModel.closeByTitle(title)
+                "1"
+            }
+            "list" -> TerminalModel.list().joinToString(",")
+            else -> "-1"
+        }
+    }
+
+    fun openAction(kind: String, path: String): String {
+        return try {
+            if (!Desktop.isDesktopSupported()) return "-1"
+            val desktop = Desktop.getDesktop()
+            when (kind) {
+                "url" -> { desktop.browse(java.net.URI(path)); "1" }
+                "file" -> { desktop.open(File(path)); "1" }
+                "folder" -> { desktop.open(File(path)); "1" }
+                else -> "-1"
+            }
+        } catch (e: Exception) {
+            Substrate.log("Open $kind failed: ${e.message}")
+            "-1"
+        }
+    }
+
+    fun visualAction(action: String, a1: String?, a2: String?, a3: String?): String {
+        val tab = TabsModel.active() ?: return "-1"
+        val fileName = tab.fileName
+        return when (action) {
+            "background" -> {
+                val path = a1 ?: return "-1"
+                val mode = a2 ?: "fit"
+                val file = File(path)
+                if (!file.exists()) {
+                    Substrate.log("Background not found: $path")
+                    return "-1"
+                }
+                VisualModel.setBackground(fileName, path, mode)
+                "1"
+            }
+            "background:reset" -> {
+                VisualModel.resetBackground(fileName)
+                "1"
+            }
+            else -> "-1"
+        }
+    }
+
+    fun askAction(question: String, default: String, type: String): String {
+        val id = AskModel.ask(question, default, type) { _ -> }
+        return id.toString()
+    }
+
+    fun extAction(name: String, args: List<String>): String? {
+        val agent = app.viewingAgent() ?: return null
+        val ctx = Ctx(agent.interpreter, agent.id, projectDir)
+        return Extensions.invoke(name, args, ctx)
+    }
 
     fun simpleAction(action: String, arg: String?) {
         scope.launch(Dispatchers.Main) {
@@ -594,12 +952,11 @@ class MainScreenSystem(private val app: MainScreenApp) {
                 "settings" -> { Substrate.showSettingsDialog = true }
                 "about" -> { Substrate.showAboutDialog = true }
                 "samples" -> { Substrate.showSamplesDialog = true }
+                "templates" -> { Substrate.showTemplatePicker = true }
                 "activeTab" -> {
                     val idx = arg?.toIntOrNull() ?: return@launch
                     app.setActiveTab(idx - 1)
                 }
-
-                // ---------- :simple:click ----------
                 "click" -> if (arg != null) {
                     val parts = arg.split(":")
                     when (parts[0]) {
@@ -615,6 +972,7 @@ class MainScreenSystem(private val app: MainScreenApp) {
                             "open" -> openFileDialog()?.let { openFile(it) }
                             "settings" -> Substrate.showSettingsDialog = true
                             "samples" -> Substrate.showSamplesDialog = true
+                            "templates" -> Substrate.showTemplatePicker = true
                             else -> Substrate.log("Unknown button: $arg")
                         }
                         "tab" -> {
@@ -663,8 +1021,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         else -> Substrate.log("Unknown click target: $arg")
                     }
                 }
-
-                // ---------- :simple:clickAt ----------
                 "clickAt" -> if (arg != null) {
                     val parts = arg.split(",").map { it.trim() }
                     val x = parts.getOrNull(0)?.toIntOrNull() ?: return@launch
@@ -678,8 +1034,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         Substrate.log("clickAt failed: ${e.message}")
                     }
                 }
-
-                // ---------- :simple:type ----------
                 "type" -> if (arg != null) {
                     val parts = arg.split(",", limit = 3).map { it.trim() }
                     val text = parts.getOrNull(0) ?: return@launch
@@ -722,20 +1076,14 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         }
                     }
                 }
-
-                // ---------- :simple:openTerminal ----------
                 "openTerminal" -> {
                     val title = arg ?: "Console"
                     TerminalModel.open(title, scope)
                 }
-
-                // ---------- :simple:closeTerminal ----------
                 "closeTerminal" -> {
                     val title = arg ?: "Console"
                     TerminalModel.byTitle(title)?.let { TerminalModel.close(it.id) }
                 }
-
-                // ---------- :simple:sendTerminal ----------
                 "sendTerminal" -> if (arg != null) {
                     val parts = arg.split(",", limit = 2).map { it.trim() }
                     val command = parts.getOrNull(0) ?: return@launch
@@ -755,8 +1103,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         }
                     }
                 }
-
-                // ---------- :simple:typeTerminal ----------
                 "typeTerminal" -> if (arg != null) {
                     val parts = arg.split(",", limit = 3).map { it.trim() }
                     val text = parts.getOrNull(0) ?: return@launch
@@ -787,17 +1133,11 @@ class MainScreenSystem(private val app: MainScreenApp) {
                         withContext(Dispatchers.Main) { app.publishActive() }
                     }
                 }
-
-                // ---------- :simple:search ----------
                 "search" -> if (arg != null) {
                     Substrate.searchQuery = arg
                     Substrate.searchMatches = searchInActiveTab(arg)
                     Substrate.searchCurrent = 0
                 }
-                "search:query" -> { Substrate.results() }
-                "search:matches" -> {}
-                "search:current" -> {}
-                "search:count" -> {}
                 "search:next" -> {
                     if (Substrate.searchCurrent < Substrate.searchMatches.size - 1) Substrate.searchCurrent++
                 }
@@ -809,7 +1149,6 @@ class MainScreenSystem(private val app: MainScreenApp) {
                     Substrate.searchMatches = emptyList()
                     Substrate.searchCurrent = 0
                 }
-
                 else -> Substrate.log("Unknown :simple:$action")
             }
         }
@@ -828,21 +1167,17 @@ class MainScreenSystem(private val app: MainScreenApp) {
         return lines
     }
 
-    // ---------- save/load ----------
+    fun save(fileName: String, content: String): Boolean {
+        return try {
+            val target = projectDir?.let { File(it, fileName) } ?: File(baseDir, fileName)
+            target.parentFile?.mkdirs()
+            target.writeText(content)
+            true
+        } catch (_: Exception) { false }
+    }
 
-    fun save(name: String, content: String): Boolean = try {
-        File(baseDir, name).writeText(content); true
-    } catch (e: Exception) { false }
-
-    fun load(name: String): String? = try {
-        File(baseDir, name).takeIf { it.exists() }?.readText()
-    } catch (e: Exception) { null }
-
-    fun readDoc(name: String): String? {
-        val candidates = listOf(File(name), File(baseDir, name), projectDir?.let { File(it, name) }).filterNotNull()
-        for (c in candidates) if (c.exists()) return try { c.readText() } catch (_: Exception) { null }
-        return null
+    fun load(fileName: String): String? {
+        val target = projectDir?.let { File(it, fileName) } ?: File(baseDir, fileName)
+        return if (target.exists()) try { target.readText() } catch (_: Exception) { null } else null
     }
 }
-
-private fun Substrate.results() {}

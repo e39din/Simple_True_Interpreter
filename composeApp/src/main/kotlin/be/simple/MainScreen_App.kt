@@ -4,6 +4,10 @@ import be.`true`.AgentAction
 import be.`true`.Interpreter
 import be.`true`.Status
 import be.`true`.StepResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainScreenApp {
     var initialized = false
@@ -37,6 +41,21 @@ class MainScreenApp {
         agentCaller = { callerId, name, action, arg -> callAgent(callerId, name, action, arg) },
         simpleCaller = { action, arg -> sys?.simpleAction(action, arg) },
         snackbarCaller = { text, kind -> SnackbarModel.show(text, kind) },
+        agentInboxReader = { callerId -> sys?.readInbox(callerId) ?: "" },
+        streamCaller = { action, name, arg -> sys?.streamAction(action, name, arg) ?: "-1" },
+        secretCaller = { action, key, value -> sys?.secretAction(action, key, value) ?: "-1" },
+        sendCaller = { type, args -> sys?.sendAction(type, args) ?: "-1" },
+        scheduleCaller = { action, a1, a2, a3 -> sys?.scheduleAction(action, a1, a2, a3) ?: "-1" },
+        soundCaller = { action, path -> sys?.soundAction(action, path) ?: "-1" },
+        websocketCaller = { action, arg -> sys?.websocketAction(action, arg) ?: "-1" },
+        retryCaller = { url, data, count, delay, idem, op ->
+            sys?.retryAction(url, data, count, delay, idem, op) ?: "-1"
+        },
+        terminalCaller = { action, a1, a2 -> sys?.terminalAction(action, a1, a2) ?: "-1" },
+        openCaller = { kind, path -> sys?.openAction(kind, path) ?: "-1" },
+        visualCaller = { action, a1, a2, a3 -> sys?.visualAction(action, a1, a2, a3) ?: "-1" },
+        extCaller = { name, args -> sys?.extAction(name, args) },
+        askCaller = { question, default, type -> sys?.askAction(question, default, type) ?: "" },
         callerAgentId = callerAgentId
     )
 
@@ -61,7 +80,6 @@ class MainScreenApp {
         while (TabsModel.byFileName("tab$n.cycle") != null) n++
         val interp = newInterpreter()
         TabsModel.create("tab$n.cycle", Substrate.DEFAULT_CODE, interpreter = interp)
-        ensureAgentFor("tab$n.cycle")
         Substrate.addFileToOrder("tab$n.cycle")
         publishActive()
     }
@@ -80,7 +98,7 @@ class MainScreenApp {
     fun openTab(name: String, code: String) {
         val interp = newInterpreter()
         TabsModel.open(name, code, interp)
-        ensureAgentFor(name)
+        if (name == "main.cycle") ensureAgentFor(name)
         Substrate.addFileToOrder(name)
         publishActive()
     }
@@ -131,6 +149,22 @@ class MainScreenApp {
         if (Substrate.viewingAgentId == null) {
             Substrate.viewingAgentId = AgentsModel.agentFor(fileName)?.id
         }
+    }
+
+    fun createAgentFor(fileName: String) {
+        if (AgentsModel.agentFor(fileName) != null) return
+        ensureAgentFor(fileName)
+        Substrate.log("Agent created for $fileName")
+        publishActive()
+    }
+
+    fun removeAgentFor(fileName: String) {
+        val a = AgentsModel.agentFor(fileName) ?: return
+        sys?.stopAgent(a.id)
+        AgentsModel.remove(a.id)
+        if (Substrate.viewingAgentId == a.id) Substrate.viewingAgentId = null
+        Substrate.log("Agent removed from $fileName")
+        publishActive()
     }
 
     fun removeAgent(id: Int) {
@@ -186,7 +220,6 @@ class MainScreenApp {
         while (TabsModel.byFileName("sample$n.cycle") != null) n++
         val interp = newInterpreter()
         TabsModel.create("sample$n.cycle", item.code, interpreter = interp)
-        ensureAgentFor("sample$n.cycle")
         Substrate.addFileToOrder("sample$n.cycle")
         publishActive()
     }
@@ -214,6 +247,7 @@ class MainScreenApp {
             a.hiddenSnapshot = emptySet()
             AgentsModel.recalcWaiter(a)
         }
+        VisualModel.clear(fileName)
         Substrate.log("Reset file $fileName")
         publishActive()
     }
@@ -231,17 +265,26 @@ class MainScreenApp {
         val tab = activeTab() ?: return
         val old = LinkedHashMap(tab.interpreter.variables)
         tab.interpreter.variables.clear()
+        tab.interpreter.aliases.clear()
         tab.interpreter.hiddenVariables.clear()
         for (line in tab.interpreter.parse(tab.code)) {
-            val m = Regex("""^\s*([^\s=]+)\s*(?<!\\)=\s*([A-Za-z_]\w*)\s*([*@]+)?\s*$""").find(line.text) ?: continue
+            val m = Regex("""^\s*([^\s=]+)\s*(?<!\\)=\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*([*@]+)?\s*$""").find(line.text) ?: continue
             val value = m.groupValues[1].trim()
-            val name = m.groupValues[2].trim()
+            val namesStr = m.groupValues[2].trim()
             val flags = m.groupValues[3]
-            if (name.isEmpty() || name == "nothing") continue
-            tab.interpreter.variables[name] =
-                if (!force && old.containsKey(name)) old[name]!! else value
-            if (flags.contains("*")) tab.interpreter.hiddenVariables += name
-            if (flags.contains("@")) tab.interpreter.constants += name
+            val names = namesStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (names.isEmpty()) continue
+            val canonical = names.first()
+            if (canonical.isEmpty() || canonical == "nothing") continue
+            if (canonical in be.`true`.Interpreter.SYSTEM_NAMES) continue
+            tab.interpreter.variables[canonical] =
+                if (!force && old.containsKey(canonical)) old[canonical]!! else value
+            tab.interpreter.aliases[canonical] = names.toMutableSet()
+            for (n in names) {
+                if (n != canonical) tab.interpreter.aliases[n] = names.toMutableSet()
+            }
+            if (flags.contains("*")) tab.interpreter.hiddenVariables += names
+            if (flags.contains("@")) tab.interpreter.constants += names
         }
         AgentsModel.agentFor(tab.fileName)?.let { a ->
             a.variablesSnapshot = LinkedHashMap(tab.interpreter.variables)
@@ -360,6 +403,7 @@ class MainScreenApp {
                     tab.code = renameInCode(tab.code, oldName, newName)
                     val v = tab.interpreter.variables.remove(oldName) ?: ""
                     tab.interpreter.variables[newName] = v
+                    tab.interpreter.aliases[newName] = mutableSetOf(newName)
                     if (oldName in tab.interpreter.constants) {
                         tab.interpreter.constants.remove(oldName)
                         tab.interpreter.constants.add(newName)
@@ -380,14 +424,14 @@ class MainScreenApp {
         val newLines = newCode.lines()
         if (oldLines.size != newLines.size) return emptyList()
         val out = mutableListOf<Pair<String, String>>()
-        val re = Regex("""^\s*([^\s=]+)\s*(?<!\\)=\s*([A-Za-z_]\w*)\s*([*@]+)?\s*$""")
+        val re = Regex("""^\s*([^\s=]+)\s*(?<!\\)=\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*([*@]+)?\s*$""")
         for (i in oldLines.indices) {
             val a = re.find(oldLines[i]) ?: continue
             val b = re.find(newLines[i]) ?: continue
             val oldValue = a.groupValues[1].trim()
             val newValue = b.groupValues[1].trim()
-            val oldName = a.groupValues[2].trim()
-            val newName = b.groupValues[2].trim()
+            val oldName = a.groupValues[2].trim().split(",").firstOrNull()?.trim() ?: continue
+            val newName = b.groupValues[2].trim().split(",").firstOrNull()?.trim() ?: continue
             val oldFlags = a.groupValues[3]
             val newFlags = b.groupValues[3]
             if (oldName != newName && oldValue == newValue && oldFlags == newFlags) {
@@ -449,12 +493,15 @@ class MainScreenApp {
     fun deleteVariable(name: String) {
         val agent = viewingAgent() ?: return
         val tab = TabsModel.byFileName(agent.fileName) ?: return
-        agent.interpreter.variables.remove(name)
-        agent.interpreter.hiddenVariables.remove(name)
-        agent.interpreter.constants.remove(name)
-        agent.interpreter.results.remove(name)
+        val canonical = agent.interpreter.resolveAliasPublic(name)
+        agent.interpreter.variables.remove(canonical)
+        agent.interpreter.aliases.remove(canonical)
+        agent.interpreter.aliases.values.forEach { it.remove(canonical) }
+        agent.interpreter.hiddenVariables.remove(canonical)
+        agent.interpreter.constants.remove(canonical)
+        agent.interpreter.results.remove(canonical)
         val regex = Regex(
-            """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(name)}([ \t]*[*@]*)?[ \t]*$""",
+            """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(canonical)}(?:[ \t]*,[ \t]*[A-Za-z_]\w*)*([ \t]*[*@]*)?[ \t]*$""",
             RegexOption.MULTILINE
         )
         tab.code = regex.replace(tab.code) { "" }.replace(Regex("""\n{3,}"""), "\n\n")
@@ -462,7 +509,7 @@ class MainScreenApp {
         agent.variablesSnapshot = LinkedHashMap(agent.interpreter.variables)
         agent.hiddenSnapshot = LinkedHashSet(agent.interpreter.hiddenVariables)
         agent.constantsSnapshot = LinkedHashSet(agent.interpreter.constants)
-        Substrate.log("Destroyed variable '$name' (UI)")
+        Substrate.log("Destroyed variable '$canonical' (UI)")
         publishActive()
     }
 
@@ -544,17 +591,18 @@ class MainScreenApp {
         var newCode = tab.code
         for ((name, value) in changed) {
             if (name in agent.interpreter.constants) continue
+            val canonical = agent.interpreter.resolveAliasPublic(name)
             val regex = Regex(
-                """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(name)}([ \t]*[*@]*)?[ \t]*$""",
+                """^([^\s=]+)[ \t]*=[ \t]*${Regex.escape(canonical)}(?:[ \t]*,[ \t]*[A-Za-z_]\w*)*([ \t]*[*@]*)?[ \t]*$""",
                 RegexOption.MULTILINE
             )
             var rewritten = 0
             newCode = regex.replace(newCode) { m ->
                 rewritten++
-                "$value = $name${m.groupValues[2]}"
+                "$value = $canonical${m.groupValues[2]}"
             }
             if (rewritten > 0) {
-                Substrate.log("Rewrote '$name' on $rewritten declaration(s)")
+                Substrate.log("Rewrote '$canonical' on $rewritten declaration(s)")
             }
         }
         if (newCode != tab.code) {
@@ -594,6 +642,8 @@ class MainScreenApp {
         if (move) Substrate.log("Func call (move) $source:$name")
         return local.results["result"] ?: ""
     }
+
+    fun readInboxContent(agentId: Int): String = sys?.readInbox(agentId) ?: ""
 }
 
 private object InterpreterCompat {

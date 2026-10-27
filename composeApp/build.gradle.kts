@@ -3,22 +3,40 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 plugins {
     kotlin("jvm")
     id("org.jetbrains.compose")
-    id("org.jetbrains.kotlin.plugin.compose") version "2.1.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
-kotlin {
-    jvmToolchain(21)
+group = "be.simple"
+version = "1.3.0"
+
+repositories {
+    mavenCentral()
+    google()
+    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
 }
 
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
 
-    testImplementation(kotlin("test"))
-}
+    // D.1 — :schedule (cron-utils)
+    implementation("com.cronutils:cron-utils:9.2.1")
 
-tasks.test {
-    useJUnitPlatform()
+    // D.2, D.3 — :sound (MP3)
+    implementation("com.googlecode.soundlibs:jlayer:1.0.1.4")
+    implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
+
+    // D.4 — :websocket (Java-WebSocket)
+    implementation("org.java-websocket:Java-WebSocket:1.5.7")
+
+    // D.5 — :send:email (javax.mail)
+    implementation("com.sun.mail:javax.mail:1.6.2")
+
+    // D.6 — :terminal (PTY)
+    implementation("org.jetbrains.pty4j:pty4j:0.12.13")
+
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
 
 compose.desktop {
@@ -26,27 +44,16 @@ compose.desktop {
         mainClass = "be.simple.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "Simple True Interpreter"
-            packageVersion = "1.1.0"
+            packageName = "Simple"
+            packageVersion = "1.3.0"
         }
     }
 }
 
-configurations.all {
-    resolutionStrategy {
-        force("org.jetbrains.compose.runtime:runtime:1.7.0")
-        force("org.jetbrains.compose.runtime:runtime-saveable:1.7.0")
-        force("org.jetbrains.compose.ui:ui:1.7.0")
-        force("org.jetbrains.compose.ui:ui-text:1.7.0")
-        force("org.jetbrains.compose.ui:ui-graphics:1.7.0")
-        force("org.jetbrains.compose.ui:ui-unit:1.7.0")
-        force("org.jetbrains.compose.ui:ui-geometry:1.7.0")
-        force("org.jetbrains.compose.ui:ui-util:1.7.0")
-        force("org.jetbrains.compose.foundation:foundation:1.7.0")
-        force("org.jetbrains.compose.foundation:foundation-layout:1.7.0")
-        force("org.jetbrains.compose.material:material:1.7.0")
-        force("org.jetbrains.compose.material:material-ripple:1.7.0")
-        force("org.jetbrains.compose.animation:animation:1.7.0")
-        force("org.jetbrains.compose.animation:animation-core:1.7.0")
-    }
+kotlin {
+    jvmToolchain(17)
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }

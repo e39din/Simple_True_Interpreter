@@ -1,607 +1,464 @@
-# True — language specification
+# Язык Simple (true) — 0.13.0
 
-Language version: **0.11.0**  
-Interpreter version: **1.1.0**  
-License: Apache 2.0 (`LICENSE-TRUE`)
+## §0. Принципы языка True
 
-## Terminology
+1. Нет типов, есть разное восприятие данных
+2. Все есть инструкция
+3. Все есть строка (подставляем `Result:$a` или `Result: a`, экранируем `\=>`, комментируем `\` — if you really need it ;))
+4. Все есть список/массив
+5. Все есть контейнер с данными
+6. Все есть математическое выражение
+7. Все есть геометрическая фигура (с осями `l` — строки `\n`, `x` — символы, `y` — через `,`, `z` — через `;`; `list:l:1 = firstLine`)
+8. Все есть условие (`a < 12 ? do something`)
+9. Если что-то есть — то есть истина (`1` / True)
+10. То что есть можем использовать (даже без названия)
+11. То что есть можем называть разными именами (`any = name, surname, label`)
+12. Программу выполняет агент
+13. Разработчик может управлять агентом
+14. Агент является частью программы
+15. Агент может менять код программы
+16. Агент может перемещаться по циклу вверх-вниз (`:step`, `:stepBack`)
+17. Агент может переместиться в любое место (`^ 1`, `^ label`, `^ any.cycle`)
+18. Агент может открывать/закрывать/изменять другие программы
+19. Агент может совершать действия в UI и терминале как пользователь (`:simple:*`, `:terminal`)
+20. Программа — то цикл
+21. Программа — то switch/when
+22. Программа — то набор инструкций
+23. Программа — то функция
+24. Код программы — источник данных (программа как БД)
+25. Данные изменились — данные в логе обновились
+26. Если можно сделать просто — делаем просто
+27. Счет начинается с 1-го (длина списка и номер последнего элемента совпадают)
+28. Работаем с тем что есть (не плодим новых сущностей)
+29. С данными можно работать просто
+30. Перемещаем одной операцией `->`, копируем другой `=>`
+31. Алгоритмические задачи можно решать простым языком
+32. Цикл (`.cycle`) исполняется в своем потоке
+33. Агент (`.agent`) работает на потоке цикла
+34. Папка есть проект (используем то что есть)
+35. Файлы в папке есть файлы проекта
+36. Скрытое заставляет додумывать чем порождает ошибки
+37. Наглядность дает понимание истины (True)
 
-- **Container** — a string of data. Everything in the language is a container. A one-line container is a string, a multi-line container is a file. A container may contain any data — plain text, or an action (function) that executes on call.
-- **Named container** — a container with a name (`value = name`). The name is a reference to the content.
-- **Cycle** — a `.cycle` file (a file-function).
-- **Agent** — a `.agent` file (a file-function + agent UI buttons).
-- **`.true`** — no longer used (reserved for project settings).
+### §0.1. Философия (дополнение)
 
-## Principles
+- **Наглядность → меньше ошибок:** чем нагляднее код и процесс, тем меньше додумывания, ошибок, больше производительности и настроения.
 
-1. **Everything is a container.** No numbers, types, or arrays. Only containers and conventions over them. **Quotes are part of the container**, not syntax. `"Hello"` is the container `"Hello"` (7 chars, with quotes). `Hello` is the container `Hello` (5 chars, no quotes). **Empty container — 0 chars.** Literal `""` — 2 chars (`"` and `"`), not an empty container. To get an empty container, use `= name` or no result.
-2. **A program is a database.** Data lives in the file text. Changing a value by name changes the declaration text too.
-3. **Data first, operations after.** `data, args => :op`.
-4. **`=>` copies, `->` moves.** `->` clears the source value, the name stays.
-5. **Axes `l/x/y/z`** — the only way to structure a container. Default axis — `x`.
-6. **A container is a multi-dimensional array** of data (`l`, `x`, `y`, `z`). Multi-dimensionality via nested axes.
-7. **No new types** (`map`, `stack`, `queue`, `tree`, `graph`, pointers).
-8. **No `for`/`while`.** Only the implicit program loop + jumps `^` and conditions `?`.
-9. **Code must be visual.** Less guessing, fewer mistakes, faster writing.
-10. **Name on the right.** `0 = a` — data on the left, name on the right.
-11. **`@` — constant, `*` — hidden.**
-12. **A program is a switch.** Each line is a branch.
-13. **A program is always executed by agents.** 1 agent per `.agent` file. Each agent is visible simultaneously (`Cycles`, `FileChips`, `Log`).
-14. **`-> nothing` — universal sink.** `file:x -> nothing`, `<var> -> nothing`. Cascade: file → agent. Purple highlight — sign of irreversibility.
-15. **Work with what you have.** Data always has an address — a line number. A name is an additional reference. If a name exists — use it. If not — use the address (`^ N`). A name appears at the moment of naming (`data = name`) and lives as long as the data exists.
-16. **Everything is a function with `:`.** System names are reserved. A user file `name.cycle` / `name.agent` — is function `:name`.
-17. **`:result` stores, does not return.** Someone will take it, maybe not. Waiter — auto-detected by `:result` presence.
-18. **Read/write is symmetric** (except `@`-constants).
-19. **`actions` — the agent's program.** Multiline, default `":run"`. `:run` — atomic execution. `:run` without an argument — executes the current line.
-20. **Agent containers:** `step` (line number), `cycle` (file name), `speed` (ms per step), `color` (agent color in `#RRGGBB` / `#AARRGGBB` / `#RGB`).
-21. **`:error` — the file's error stack.** `:error`, `:error:line`, `:error:message`, `:error:lines`, `:error:messages`, `:error:resolve`. `:error` does **not** pause by default. To pause all agents — `:pauseAll`.
-22. **Naming, not creating.** `= name` is naming. `name` is a **name for the value on the left**. The value already exists. `name` receives the value.
-23. **`=>` is never naming.** `chain => name` — error if `name` is not declared. Naming — only via `=`.
-24. **Modules and imports are not needed.** True + Simple can open any file from code via `:file:read` / `:file:data` / `^ file.cycle` / `:file_name`. No `import` / `require` / `use`.
-25. **Any subject starting with `:` is both a function and a container. No exceptions.** `:math`, `:run`, `:log`, `:agent:main:status`, `:simple:search:count` — all. **Function:** `data => :name` — executes. **Container:** `:name` — substitution (empty string if not set). **Naming:** `:name => dst` / `:name = dst` — `dst` receives the value of `:name`. **Forbidden:** `dst = :name` — system name on the right of `=` is forbidden.
+---
 
-## Files
+## §0.2. Примеры: от простого к игре
 
-| Extension | Type | UI | Agent |
-|---|---|---|---|
-| `.cycle` | Cycle (file-function) | File buttons | No |
-| `.agent` | Agent | File buttons + agent buttons | Yes |
-| `.txt`, `.json`, no extension | File | File buttons | No (agent can jump there) |
-| `.true` | **Not used** (project settings) | — | — |
+### Пример 1: Hello
 
-**Any extension** — an agent can jump to any file via `^ file.ext`.
+hello => :message
 
-## Program
+### Пример 2: Счётчик
 
-- Line numbers start at 1.
-- Default program — a loop: after the last line without `=> :stop`, execution returns to the first line.
-- `\` at line start — the whole line is treated as text (literal).
-- `\ ... \` in the middle of a line — the part between `\` and `\` is a **literal**, not executed or substituted.
-- `\` before an operation symbol — the symbol is treated as text; `\` is stripped in output.
-- `\,` — escapes a single separator (comma); `\;`, `\.` — likewise.
-- A line without a recognized operation is a comment.
-- **Examples in `SAMPLES.md`** work **in the middle of a loop**.
-
-## Naming
-
-```true
-value = name
-value = name *
-value = name @
-```
-
-- `name` — identifier `[A-Za-z_]\w*`. `nothing` — reserved.
-- `*` — hide from the main Values list.
-- `@` — constant: writing and moving are forbidden.
-- **Naming, not creating.** `value = name` gives the name `name` to the value `value`.
-- **Naming is always `=`**, never `=>`.
-- **Content** — what is **before** the operation or chain of operations.
-- **`a + 1 => sum = func1`** ≡ **`\ a + 1 => sum \ = func1`** — both name `func1` as the content `"a + 1 => sum"`. The content is **text**, not executed.
-
-**Examples:**
-
-| Code | What happens |
-|---|---|
-| `50 = dmg` | Naming: `dmg` = `"50"` |
-| `= dmg` | Naming an empty container |
-| `12 + 1 => :math = dmg` | Naming the result: `dmg` = `"13"` |
-| `12 + 1 => newName` | **Error** — `newName` is not declared |
-| `:math => dst` | `dst` receives the value of `:math` |
-| `:result = sub` | Naming: `sub` = the value of `:result` |
-| `a => b` | **Error** — `b` is not declared (use `= b` first) |
-| `a -> b` | **Error** — `b` is not declared (use `= b` first) |
-| `data => :fn` | **Not naming** — result in `:fn` |
-| `data => :fn => dst` | `dst` receives the value of `:fn` |
-| `^ newName` | **Error** — unknown jump target |
-| `5 = :math` | **Error** — system name on the right |
-| `:math = dst` | Naming: `dst` = the value of `:math` |
-
-### Name before use
-
-**Rule:** before using a name in an operation, the name must be declared:
-- `= name` (empty container), or
-- `value = name` (named container with a value).
-
-**Exception:** if the name is **already** a variable, `= name` is not needed.
-
-### Everything with `:`
-
-**Any subject starting with `:` is both a function and a container.** No exceptions.
-
-| Form | What |
-|---|---|
-| `data => :name` | Function — executes |
-| `:name` | Container — substitution (empty string if not set) |
-| `:name => dst` | Naming — `dst` receives the value of `:name` (empty if not set) |
-| `:name = dst` | Naming — same |
-| `dst = :name` | **Error** — system name on the right of `=` |
-
-**Examples:**
-- `:math` — value of the last `:math` operation.
-- `:run` — empty string (if not set).
-- `:log` — empty string.
-- `:agent:main:status` — empty string.
-- `:simple:search:count` — number of matches.
-
-### Literal
-
-To keep a name as text, use `\ name`:
-
-```true
-\ func1
-```
-
-## Labels and jumps
-
-```true
-= label
-^ N
-^ label
-^ file_name.cycle
-^ file_name.agent
-^ data.txt
-^ :stop
-^ :pause
-^ :resume
-^ :delete
-^ :reset
-```
-
-- `= label` — naming an empty container (a label).
-- `^ N` — goto by line number.
-- `^ label` — goto by label (no dot, exists in the current file).
-- `^ file_name.cycle` / `^ file_name.agent` / `^ data.txt` — goto to a file (dot — extension).
-- `^ :stop` / `^ :pause` / `^ :resume` / `^ :delete` — commands to the agent.
-- `^ :reset` — reset the file.
-- `^ notes` (no dot, no label, not a number) — **error**.
-
-**Priority of `^` parsing:**
-1. Number → line N.
-2. `:stop` / `:pause` / `:resume` / `:delete` / `:reset` → command.
-3. Label (no dot, exists in file) → label.
-4. File (has dot) → file.
-5. Else → error.
-
-### Agent jump rules
-
-- Jump to a file **without reset**: `agent.fileName = target`, `currentStep = 1`, `variables` are preserved.
-- If the target file is occupied by **another agent** — error `occupied, 1, target=..., agent=...`, `PAUSED`.
-- The agent can jump to **its own file** — normal transition.
-
-## Conditions
-
-```true
-condition ? operation
-```
-
-- Left of `?` — the condition; right — any operation.
-- Supported: `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`, `!`.
-- **Parentheses are supported.**
-- **Priorities:** `||` < `&&` < `!` < comparison.
-- **Exactly one `?` per line.** Nested `?` — error `Multiple ? on one line`.
-
-## Copy and move
-
-- `a => b` — copy (requires `= b` before).
-- `a -> b` — move (requires `= b` before).
-- `v -> data:y:3` — replace an element.
-- `v ->| data:y:3` — insert (move).
-- `v =>| data:y:3` — insert (copy).
-- `file:a => file:b` — copy file content. `file:a -> file:b` — move.
-- `file:a => var` — read file into a container. `var => file:b` — write container to file.
-
-### Chains `=>`
-
-`=>` can be **chained**: `data => :fn1 => :fn2 = dst`. The result is named by `= dst`.
-
-```true
-input.txt => :get => raw
-raw:l => :size => lineCount
-1, 2, 3 => :sum => result
-```
-
-## Commands
-
-```true
-=> :pause
-=> :resume
+0 = a
+= loop
+a + 1 => :math => a
+a => :message
+a < 5 ? ^ loop
+Готово! => :message
 => :stop
-=> :reset
-=> :activeTab
-=> :activeTab, step
-```
 
-## `:math` — numeric operations
+### Пример 3: Калькулятор (`:ask`)
 
-| Operation | Syntax |
-|---|---|
-| Arithmetic | `a + b => :math` |
-| Bitwise | `a & b => :math`, `a << 1 => :math` |
-| Functions | `abs(a) => :math`, `popcount(a) => :math` |
-| Boolean | `a == b => :math` → `0/1` |
-| Lists | `1, 2, 3 => :math:sum`, `:math:min/max/avg/product/count/sort` |
+Первое число: => :ask => a
+Второе число: => :ask => b
+a + b => :math => result
+Сумма: => :message
+result => :message
+=> :stop
 
-**Boolean operators** — with priorities and parentheses. Comparisons after arithmetic: `1 + 2 == 3 => :math` → `1`.
+### Пример 4: Игра «Пещера» (см. SAMPLES.md §16)
 
-**Result:** `:math` (substitution), `:math:op`. To name — `:math = dst` / `:math => dst`.
+100 = hp
+0 = gold
+факел = item
+3 = potions
 
-## `:data` — container operations
+Ты в пещере. Выход справа. Слева — дракон. => :message
+hp = 100, gold = 0, item = факел, potions = 3 => :message
 
-| Operation | Syntax | Axis |
+= turn
+Что делаешь? (1 — идти, 2 — драться, 3 — лечиться, 4 — выход) => :ask
+
+= wait
+:ask:pending == 1 ? ^ wait
+:ask => choice
+
+choice == 1 ? ^ go
+choice == 2 ? ^ fight
+choice == 3 ? ^ heal
+choice == 4 ? ^ exit
+Неизвестный выбор. Попробуй снова. => :message
+^ turn
+
+= go
+Ты идёшь вглубь пещеры... => :message
+gold + 10 => :math => gold
+Нашёл 10 золота! => :message
+gold => :message
+^ turn
+
+= fight
+Дракон атакует! => :message
+hp - 30 => :math => hp
+hp > 0 ? Ты жив! => :message
+hp > 0 ? hp => :message
+hp <= 0 ? ^ dead
+^ turn
+
+= heal
+potions > 0 ? Пьёшь зелье... => :message
+potions > 0 ? potions - 1 => :math => potions
+potions > 0 ? hp + 20 => :math => hp
+potions > 0 ? hp => :message
+potions > 0 ? potions => :message
+potions == 0 ? Зелья кончились! => :message
+^ turn
+
+= exit
+Ты выходишь из пещеры! => :message
+gold => :message
+hp => :message
+item => :message
+
+item -> dragon_item
+Факел отдан дракону. => :message
+item => :message
+dragon_item => :message
+
+^ ending.cycle
+
+= dead
+Ты погиб... => :message
+=> :stop
+
+---
+
+## §0.3. Шаблоны обучения
+
+При первом запуске — диалог «Выбери шаблон» (5 шаблонов):
+
+| # | Шаблон | Что | Уровень |
+|---|---|---|---|
+| 1 | Hello | `hello => :message` | Новичок |
+| 2 | Счётчик | Цикл с goto | Новичок |
+| 3 | Калькулятор | `:ask` + `:math` | Средний |
+| 4 | Пещера | Игра (`:ask`, goto, move) | Средний |
+| 5 | Плагин | `:ext` | Продвинутый |
+
+Шаблоны — в `templates/*.cycle`; открываются в новой вкладке; не перезаписывают `main.cycle`.
+
+---
+
+## 1. Базовые элементы
+
+| Элемент | Синтаксис | Пример |
 |---|---|---|
-| `substring` | `data, start, end => :data:substring` | only `x` |
-| `indexOf` | `data, sub => :data:indexOf` | by axis |
-| `replace` | `data, old, new => :data:replace` | only `x` |
-| `lower` / `upper` / `trim` | `data => :data:lower` | by axis |
-| `chars` | `data, sep => :data:chars` | only `x` |
-| `charAt` | `data, i => :data:charAt` | by axis |
-| `size` | `data => :data:size`, `data:y => :data:size` | by axis |
-| `:s` | `data => :s`, `data:y => :s` | by axis (short) |
-| `reverse` / `unique` | `data => :data:reverse` | by axis |
-| `contains` | `data, v => :data:contains` | by axis |
-| `slice` | `data, from, to => :data:slice` | by axis |
-| `join` | `data, axis => :data:join` | by axis |
-| `sort` | `data:y => :data:sort` | by axis |
-| `push` | `data:y, v => :data:push` | by axis |
-| `pop` | `data:y => :data:pop` | by axis |
-| `peek` | `data:y => :peek` | by axis |
-| `remove` / `swap` | `data:y, ... => :data:<op>` | by axis |
-| `deleteRange` / `replaceRange` | `data:y, from, to => :data:<op>` | by axis |
-| `filter` | `data, cond => :filter` | by `y` |
-| `matches` | `data, regex => :matches` | by `x` |
+| Контейнер (переменная) | `value = name` | `5 = a` |
+| Синонимы | `value = name1, name2, name3` | `12 = twelve, number, a` |
+| Скрытый контейнер | `value = name *` | `5 = a *` |
+| Константа | `value = name @` | `5 = a @` |
+| Пустой контейнер | `= name` | `= a` |
+| Результат | `expr => :op` | `a + 1 => :math` |
+| Именование результата | `:op => name` | `:math => b` |
+| Метка | `= label` | `= loop` |
+| Переход | `^ target` | `^ loop`, `^ 5`, `^ any.cycle` |
+| Условие | `cond ? action` | `a < 5 ? ^ loop` |
+| Комментарий | `\ text` | `\ это комментарий` |
+| Экранирование | `\=>` | `\=> не операция` |
+| Команда | `=> :stop` | `=> :pause` |
 
-**Axis is explicit or default `x`.** Exception: `substring`, `replace`, `chars` — only `x`.
+### Условие `?`
 
-## Functional operations
+`?` — условный оператор **только** если:
+- Слева — валидное условие (`a == b`, `a < 5`, `a`, `1`).
+- Справа — валидная операция (`^`, `=>`, `:`, `=`, `->`).
 
-| Operation | Syntax | Result |
-|---|---|---|
-| `:map` | `arr:y, expr => :map` | `:map` — new container |
-| `:reduce` | `arr:y, init, expr => :reduce` | `:reduce` — final accumulator |
-| `:fold` | `arr:y, init, expr => :fold` | `:fold` — final accumulator |
-| `:each` | `arr:y, expr => :each` | no result (side effects) |
+Иначе `?` — символ строки: `Что делаешь? (1, 2, 3)` — не условие.
 
-**Variables inside `expr`:**
-- `:map` — `n`, `i`
-- `:reduce` / `:fold` — `acc`, `n`, `i`
-- `:each` — `n`, `i`
+### Запятые
 
-**Expression vs operation:**
-- `:map` / `:reduce` / `:fold` — `expr` is a **expression**.
-- `:each` — `expr` is an **operation**.
+`,` — разделитель **только** в аргументах функций (`:math`, `:data`, `:json`, ...).
+В `:message` и `NAMING` — `,` — часть строки: `hp = 100, gold = 0` — ок.
 
-**Argument as name:** if `expr` is a name of an existing container — its body is used.
+### Синонимы
 
-**Axis:** from `arr:y`, otherwise `x`.
+12 = twelve, number, a
 
-## `:json`
+- Первое имя — canonical; остальные — alias.
+- Обращение по любому имени — одно значение.
+- `^ twelve`, `^ number`, `^ a` — переход к метке по любому имени.
+- Если не используешь — не давай (принцип простоты).
 
-| Operation | Syntax |
-|---|---|
-| `get` | `json, key => :json:get` |
-| `set` | `json, key, value => :json:set` |
-| `names` | `json => :json:names` |
-| `values` | `json => :json:values` |
+### Кавычки
 
-## `:file`
+- **Не нужны** для простых строк: `hello = a`.
+- **Не нужны** для строк с `,`/`?`/`=>`: `hp = 100, gold = 0`, `Что делаешь? (1, 2)`.
+- `:assert` — единственное исключение: `a == b, 'msg' => :assert`.
 
-| Operation | Syntax |
-|---|---|
-| `file:data` | `path => :file:data` / `path, content => :file:data` |
-| `file:origin` | `path => :file:origin` / `path, content => :file:origin` |
-| `file:lines` | `path => :file:lines` / `path, N, text => :file:lines` |
-| `file:create` | `path, content => :file:create` |
-| `file:read` | `path => :file:read` |
-| `file:update` | `path, content => :file:update` |
-| `file:delete` | `path => :file:delete` |
-| `file:list` | `path => :file:list` |
-| `file:exists` | `path => :file:exists` |
-| `:path` | `:file:a => :path` |
+---
 
-## `:console`, `:run`
+## 2. Функции ядра
 
-```true
-command => :console
-```
+### 2.1. `:math` — арифметика
 
-- `:console` — execute an OS command.
-- `:run` — **atomic execution of a line** (for `actions`). Without an argument — executes the **current** line.
+a + b => :math
+a * b => :math
+a ** 2 => :math
+abs(a) => :math
+1, 2, 3 => :math:sum
 
-### `:run` is atomic
+### 2.2. `:data` — строки, списки, multi-axis
 
-| Level | Who moves | What happens |
-|---|---|---|
-| **Agent step** | `executeOneStep` — advances `currentStep`, executes `actions` | One tick of the agent loop |
-| **Line step** | `:run` inside `actions` — executes **one** program line | Atomically |
+data => :data:size
+data => :data:upper
+data:y => :data:sort
+data:y, value => :data:push
+data => :data:empty
+data, key => :data:groupby
+data, key, sum => :data:groupby
 
-## `:api`
+Оси: `x` (символы), `y` (через запятую), `z` (через `;`), `l` (строки).
 
-| Operation | Syntax |
-|---|---|
-| `api:get` | `url, query => :api:get` |
-| `api:post` | `url, data => :api:post` |
-| `api:put` | `url, data => :api:put` |
-| `api:delete` | `url => :api:delete` |
-| `api:patch` | `url, data => :api:patch` |
-| `api:websocket` | `url => :api:websocket` |
+### 2.3. `:json` / `:xml`
 
-## `:save` / `:load`
+json, key => :json:get
+json, key, value => :json:set
+json => :json:names
+json => :json:values
 
-```true
-path, data  => :save
-=> :save
-file_name:save
-path, query => :load
-```
+xml, /root/item => :xml:get
+xml => :xml:names
+xml => :xml:values
 
-## `:range` / `:repeat`
+### 2.4. `:api` — HTTP
 
-```true
-1, 5 => :range
-5, 1 => :range
-a + 1 => a = action
-action, 5 => :repeat
-```
+url, data => :api:post
+url => :api:get
+url, data => :api:put
+url => :api:delete
+url, data => :api:patch
+url => :api:websocket
 
-## `:pauseAll` / `:resumeAll`
+### 2.5. Retry
 
-```true
-:pauseAll
-:resumeAll
-1 => :pauseAll
-0 => :pauseAll
-go, go, go => :pauseAll
-```
+url, data => :api:post:retry
+url, data, 5 => :api:post:retry
+url, data, 5, 2000 => :api:post:retry
+url, data, 5, 2000, 1 => :api:post:retry
+url => :api:get:retry
 
-- `:pauseAll` — pause **all** agents.
-- `:resumeAll` — resume **all** agents.
-- Parameters ignored.
+Повторяются только transient-ошибки: 5xx, timeout, IOException. POST — только с `idempotent=1`.
 
-## `:error` — the file's error stack
+### 2.6. Mock
 
-Errors are **at the file level**, not the agent level. The stack accumulates.
+url, response => :api:mock
+url, response, 200 => :api:mock
+:api:mock:reset
+:api:mock:list => dst
 
-| Function | Result |
-|---|---|
-| `:error` | `"1"` / `"0"` |
-| `:error:line` | last error's line number |
-| `:error:message` | `<code>, <1\|0>, <details>` |
-| `:error:lines` | all lines, comma-separated |
-| `:error:messages` | all messages, `\n`-separated |
-| `message => :error` | set an error |
-| `0 => :error:resolve` | mark errors as resolved (`1` → `0`) |
+### 2.7. `:file` / Streams
 
-**`:error` does NOT pause by default.** To pause — call `:pauseAll`.
+path => :file:read
+path, content => :file:create
+path => :file:exists
+path => :file:list
 
-### Format of `error:message`
+path => :file:stream => dst
+:stream:next => dst
+:stream:seek name, pos
+:stream:close
+:stream:list => dst
+data => :data:empty
 
-`<code>, <1|0>, <details>`
+### 2.8. `:terminal` — PTY
 
-- `<code>` — `custom`, `occupied`, `notfound`, `recursive`, `assert`, `range`, `const`, `nested`.
-- **`1` — active, `0` — resolved.**
-- `<details>` — free text.
+command => :terminal => Console
+text, Console => :terminal:write
+Console => :terminal:read
+Console => :terminal:close
+:terminal:list => dst
 
-## `:assert` — condition check
+`:console` — deprecated, алиас `:terminal`.
 
-```true
-a == b, "msg" => :assert
-```
+### 2.9. `:open` — ОС
 
-- **Success:** `:assert` = `"1"`, `LogEntry(type="assert", resolved=true)` — green.
-- **Failure:** `:assert` = `"0"`, `LogEntry(type="assert", resolved=false)` — red. Also added to `:error` stack with code `assert`.
-- **`:assert` does NOT pause by default.** To pause — call `:pauseAll`.
+https://example.com => :open:url
+/path/to/file => :open:file
+/path/to/folder => :open:folder
 
-Without message: `a == b => :assert` — snackbar warning `:assert without message`.
+### 2.10. `:secret` — AES-GCM
 
-## Agents
+key => :secret:get
+key, value => :secret:set
+key => :secret:remove
+:secret:list => dst
 
-### Agent containers
+### 2.11. `:send`
 
-| Container | What |
-|---|---|
-| `step` | Line number |
-| `cycle` | File name |
-| `speed` | ms per step (`100 = speed`) |
-| `color` | Agent color (`#00cc22 = color`) |
+chat_id, message => :send:telegram
+chat_id, message => :send:max
+to, subject, body => :send:email
 
-### Agent functions
+Токены — только через `:secret:get` (не хардкод).
 
-```true
-:agent:<name>:status => dst
-:agent:<name>:waiter => dst
+### 2.12. `:schedule` — cron
+
+*/5 * * * *, action_var => :schedule
+0 9 * * 1-5, morning, Europe/Moscow => :schedule
+:schedule:list => dst
+:schedule:stop
+:schedule:stop => 1
+10 => :schedule:limit
+
+### 2.13. `:sound`
+
+path => :sound:play
+:sound:stop
+path => :sound:stop
+
+### 2.14. `:websocket`
+
+8080 => :websocket:listen
+message => :websocket:send
+:websocket:message => dst
+:websocket:clients => dst
+:websocket:close
+
+### 2.15. `:mem` — память (asm/C-стиль)
+
+16 => :mem:alloc => p
+p, 42 => :mem:write
+p => :mem:read => v
+@1000
+p, 0, 16 => :mem:fill
+p, 4 => :mem:dump
+p => :mem:free
+
+### 2.16. `:background` — фон визуализации
+
+/path/to/bg.png => :background
+/path/to/bg.png, tile => :background
+/path/to/bg.png, stretch => :background
+/path/to/bg.png, center => :background
+/path/to/bg.png, fit => :background
+:background:reset
+
+### 2.17. `:ask` — диалог с вопросом
+
+question => :ask
+question => :ask => dst
+question, default => :ask
+question, default, number => :ask
+question, default, choice:1,2,3,4 => :ask
+
+**Асинхронный:** `results['ask:pending'] = '1'` (пока нет ответа); агент продолжает.
+После ответа — `results['ask'] = value`, `results['ask:pending'] = '0'`.
+
+Ожидание:
+
+= wait
+:ask:pending == 1 ? ^ wait
+:ask => choice
+
+### 2.18. `:agent` — inbox
+
+message => :agent:broadcast
+agent-1, message => :agent:send
+:agent:inbox => dst
+:agent:inbox:clear
 :agent:status => dst
-```
+100 => :agent:wait
 
-### Agent control
+### 2.19. `:simple` — UI-автоматизация
 
-```true
-^ :stop
-^ :pause
-^ :resume
-^ :delete
-^ :reset
-```
+button:startAll => :simple:click
+tab:main.cycle => :simple:click
+agent:agent-1:play => :simple:click
+100, 200 => :simple:clickAt
+hello, editor:current => :simple:type
+Console => :simple:openTerminal
+ls -la, Console => :simple:sendTerminal
+hello => :simple:search
 
-### Waiting
+### 2.20. `:error` / `:assert`
 
-```true
-<ms> => :agent:wait
-<ms>, <timeout> => :agent:wait:timeout
-```
+:error => dst
+0 => :error:resolve
+a == b, 'msg' => :assert
+1 => :error:pause
+0 => :error:pause
+1 => :assert:pause
+0 => :assert:pause
 
-### Waiter — auto-detection
+### 2.21. `:pinned` — закреплённые контейнеры
 
-- `:result` in the file → waiter.
-- No `:result` → cyclic.
+a => :pinned:add
+b => :pinned:add
+a => :pinned:remove
+:pinned:list => dst
+:pinned:clear
 
-### Vertical files
+Закрепляет столбец контейнера в панели «Pinned»; сохраняется в `settings.true`.
 
-- `fileOrder` — vertical order (Y axis).
-- `↑` / `↓` buttons in the file button row.
+### 2.22. `:ext` — плагины
 
-### UI
+args => :ext:name
+args => :ext:name => dst
+:ext:list => dst
 
-**File buttons** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, **all** files.
-**Agent buttons** (`▶⏸⏹⏭⏮`) — bottom, **only** `.agent`.
-**`⛶`** — in the header, all files.
+---
 
-## `:simple` — interpreter functions
+## 3. Сравнение языков
 
-`:simple:*` — 36 functions, async, result in `:simple` = `"1"`. Destructive actions are logged.
+| Задача | Simple | ASM | C | Python | Kotlin |
+|---|---|---|---|---|---|
+| Сложить 2 числа | `a + b => :math` | `mov eax, a; add eax, b` | `int c = a + b;` | `c = a + b` | `val c = a + b` |
+| Цикл 5 раз | `= loop`<br>`a + 1 => :math => a`<br>`a < 5 ? ^ loop` | `mov ecx, 5; loop:` | `for (i=0;i<5;i++)` | `for i in range(5):` | `repeat(5) { }` |
+| Прочитать файл | `input.txt => :file:read` | `open/read/close` | `fopen/fread/fclose` | `open().read()` | `File().readText()` |
+| HTTP POST | `url, data => :api:post` | — | `libcurl` | `requests.post()` | `HttpClient` |
+| Память | `16 => :mem:alloc => p` | `malloc` | `malloc` | — | `ByteArray` |
+| Визуализация | `10, 20 => rect_1.area` | — | — | — | Compose |
 
-### Base (21)
+---
 
-| Function | What |
+## 4. StrictMode
+
+В StrictMode запрещены системные функции: `:mem`, `:terminal`, `:send`, `:schedule`, `:sound`, `:websocket`, `:stream`, `:data:empty`, `:background`, `:rect`, `:open`, `:xml`, `:ask`, `:pinned`.
+`:secret` — **разрешён** (токены для API).
+`:ext` — **разрешён** (плагины).
+
+---
+
+## 5. Потоки
+
+- Поток = столбец (`.cycle`).
+- Агент работает на потоке цикла.
+- Несколько агентов в одном столбце — последовательно (один поток).
+- Агенты в разных столбцах — разные потоки.
+- `switchAgentFile` — отмена Job старого столбца → новый Job.
+
+---
+
+## 6. Ошибки
+
+- По умолчанию — **не пауза**: агент продолжает.
+- `:error:pause` / `:assert:pause` — флаг: `1` — пауза, `0` — не пауза (default).
+- `occupied` (столкновение) — **всегда** без паузы.
+- `:pause` / `:stop` — явные команды.
+
+---
+
+## 7. Файлы
+
+| Файл | Что |
 |---|---|
-| `:simple:open` | Open a file (absolute or relative to projectDir/baseDir) |
-| `:simple:save` | Save current |
-| `:simple:saveAs` | Save as |
-| `:simple:newCycle` | New cycle |
-| `:simple:newAgent` | New agent |
-| `:simple:openFolder` | Open folder |
-| `:simple:rename` | Rename current |
-| `:simple:delete` | Delete current (logged) |
-| `:simple:reset` | Reset current file |
-| `:simple:close` | Close current tab (logged) |
-| `:simple:moveUp` | Move file up |
-| `:simple:moveDown` | Move file down |
-| `:simple:startAll` | Start all agents |
-| `:simple:pauseAll` | Pause all |
-| `:simple:stopAll` | Stop all (logged) |
-| `:simple:stepAll` | Step all |
-| `:simple:stepBackAll` | Step back all |
-| `:simple:settings` | Open settings |
-| `:simple:about` | About |
-| `:simple:samples` | Samples |
-| `:simple:activeTab` | Switch tab |
-
-### UI automation (3)
-
-| Function | What |
-|---|---|
-| `:simple:click` | Click a UI element (`button:*`, `tab:*`, `agent:*`, `menu:*`, `file:*`) |
-| `:simple:clickAt` | Click at absolute screen coordinates (AWT Robot) — **dangerous, runtime only, no headless** |
-| `:simple:type` | Type text into a UI element, character by character (like a human) |
-
-### Terminal (4)
-
-| Function | What |
-|---|---|
-| `:simple:openTerminal` | Open a real OS terminal (`ProcessBuilder`), start reading stdout/stderr |
-| `:simple:closeTerminal` | Close a terminal (`process.destroy()`) |
-| `:simple:sendTerminal` | Send a command to terminal (write to stdin + `\n`) |
-| `:simple:typeTerminal` | Type text into terminal, character by character (write to stdin) |
-
-### Search (8)
-
-| Function | What |
-|---|---|
-| `:simple:search` | Set query + run search |
-| `:simple:search:query` | Current query |
-| `:simple:search:matches` | Lines with matches |
-| `:simple:search:current` | Current match (1-based) |
-| `:simple:search:count` | Number of matches |
-| `:simple:search:next` | Next match |
-| `:simple:search:prev` | Previous match |
-| `:simple:search:clear` | Clear search |
-
-**Result:** `:simple` = `"1"` (accepted, async). To use — `:simple` (substitution) or `:simple = name` (naming). **Never** `name = :simple` — system name on the right is forbidden.
-
-## Settings
-
-| Function | Syntax | Default |
-|---|---|---|
-| `:historyLimit` | `100 => :historyLimit` / `:historyLimit = dst` | 100 |
-| `:logLimit` | `1000 => :logLimit` / `:logLimit = dst` | 1000 |
-| `:strictMode` | `1 => :strictMode` / `:strictMode = dst` | 0 |
-| `:autoSync` | `1 => :autoSync` / `:autoSync = dst` | 1 |
-
-## Functions — files
-
-**File = function.** `math.cycle` — function `:math`.
-
-```true
-math:fact:
-parameters == 0 ? 1 => :result
-= sub
-parameters - 1 => .:math:fact => sub
-parameters * sub => :math => :result
-:result
-```
-
-- `:parameters` — entry marker.
-- `=> :result` — set the value.
-- `:result` at the end — end marker. Waiter — auto.
-
-Call: `data => :math = result`.
-
-**System names are reserved.**
-
-## `actions` — the agent's program
-
-- `AgentState.actions: String` (multiline), default `":run"`.
-- `executeOneStep` advances `currentStep`, executes `actions`.
-- `:run` — atomic execution.
-- `:log` — log the current line.
-
-## `:stack` — explicit stack
-
-`:stack:push` = `:push`, `:stack:pop` = `:pop`, `:stack:peek` — top element without removal.
-
-```true
-1, 2, 3 = stack
-stack:y, 4 => :stack:push
-stack:y => :stack:peek = top
-stack:y => :stack:pop = top
-```
-
-## Strict Mode
-
-Strict Mode **forbids** calls to system functions. User `:file_name` — **allowed**. Substitution of named containers — **allowed**.
-
-**System names (forbidden in Strict Mode):**
-
-```
-math, data, json, file, api, console, save, load, get, post, size, s,
-sum, min, max, avg, product, count, sort, map, reduce, fold, each,
-call, filter, matches, error, message, agent, run, log, repeat, range,
-parameters, result, activeTab, path, source, test, return, assert,
-simple, stack, pauseAll, resumeAll
-```
-
-**Allowed:**
-- `:file_name` — user files
-- `^ :stop` / `:pause` / `:resume` / `:delete` / `:reset` — commands
-- `=`, `=>`, `->`, `?`, `\`, `func1` — substitution
-
-## Errors
-
-- **Validation:** unknown label, `Multiple ?`, `=> :result inside function`.
-- **Execution:** write to a constant, out of range, file missing → `PAUSED` + `errorLine`.
-- **Agents:** `occupied` → error.
-- `nothing = ...` → `error: 'nothing' is reserved`.
-- `5 = result` → `error: 'result' is reserved`.
-
-## Versioning
-
-- Language: **0.11.0**. Interpreter: **1.1.0**.
-- `PATCH` — fixes. `MINOR` — new features. `MAJOR` — breaking.
-
-## Version history (0.11.0)
-
-- **Substitution of named containers.**
-- **`:map` / `:reduce` / `:fold` / `:each`** — new.
-- **`:foreach` removed.**
-- **`:error` format** — `<code>, <1|0>, <details>`; `:error:resolve`; `LogEntry.resolved`. `:error` does not pause by default.
-- **`:pauseAll` / `:resumeAll`** — new.
-- **`:assert`** — new.
-- **Settings** — `:historyLimit`, `:logLimit`, `:strictMode`, `:autoSync`.
-- **`:simple:*`** — 36 functions.
-- **`:stack:peek`** — new.
-- **`speed` and `color`** — agent containers.
-- **`MrGreen.agent`** — first start.
-- **Escaping** — `\ ` (line), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
-- **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
-- **Modules and imports are not needed.**
-- **`=>` is never naming.** Naming — only `= name`.
-- **Any subject starting with `:` is both a function and a container. No exceptions.**
+| `settings.true` | Настройки (скорость, strictMode, fileOrder, recentProjects, pinned) |
+| `progress.true` | Прогресс (completedSamples) |
+| `start.cycle` | Стартовый код |
+| `templates/*.cycle` | Шаблоны обучения |
+| `*.inbox` | Inbox агентов |
