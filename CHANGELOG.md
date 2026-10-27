@@ -1,164 +1,96 @@
-# Changelog
+# CHANGELOG
 
-## 0.11.0 — Substitution, `:map`/`:reduce`/`:fold`/`:each`, `:pauseAll`/`:resumeAll`, `:assert`, `:simple:*`
+## 1.3.0 (2026-10-27)
 
-- **Substitution of named containers.** A name in operation position is substituted and executed. Applies to any container — with value (`5 = a`) or action (`a + 1 => sum = func1`). Recursion guard, max depth 10.
-- **`=>` is never naming.** `chain => name` — error if `name` is not declared. Naming — only `= name`.
-- **Content is what comes before the operation.** `a + 1 => sum = func1` ≡ `\ a + 1 => sum \ = func1` — both name `func1` as the content `"a + 1 => sum"` (text, not executed).
-- **Any subject starting with `:` is both a function and a container. No exceptions.** `:math`, `:run`, `:log`, `:agent:main:status`, `:simple:search:count` — all. `:name` — substitution (empty string if not set). `:name => dst` / `:name = dst` — naming. `dst = :name` — error.
-- **`:map` / `:reduce` / `:fold` / `:each`** — new functional operations.
-- **`:foreach` removed.** Replaced by `:each`.
-- **`:stack:peek`** — new (top element without removal).
-- **`:simple:*`** — 36 interpreter functions (async, result in `:simple` = `"1"`).
-- **`:simple:click`** — new: click a UI element (`button:*`, `tab:*`, `agent:*`, `menu:*`, `file:*`).
-- **`:simple:clickAt`** — new: click at absolute screen coordinates (AWT Robot). **Dangerous, runtime only, no headless.**
-- **`:simple:type`** — new: type text into a UI element, character by character (like a human). `delay` 30 ms by default.
-- **`:simple:openTerminal` / `:simple:closeTerminal` / `:simple:sendTerminal` / `:simple:typeTerminal`** — new: real OS terminal (ProcessBuilder, stdin/stdout/stderr, character-by-character stdin).
-- **`:simple:search:*`** — new: 8 functions for search results (`search`, `search:query`, `search:matches`, `search:current`, `search:count`, `search:next`, `search:prev`, `search:clear`).
-- **`:pauseAll` / `:resumeAll`** — new: pause / resume all agents. Parameters ignored.
-- **`:assert`** — new: `a == b, "msg" => :assert`. Success — green, failure — red. Does not pause by default. To pause — call `:pauseAll`.
-- **`:agent:wait:timeout`** — new.
-- **Settings:** `:historyLimit` (100), `:logLimit` (1000), `:strictMode` (0), `:autoSync` (1).
-- **`:error` format** — `<code>, <1|0>, <details>` (1 — active, 0 — resolved). `:error:resolve`, `LogEntry.resolved`, `errorLines` / `resolvedLines`. **`:error` does not pause by default.**
-- **`COPY_RE`** — `a => b` copies.
-- **Escaping** — `\ ` (line literal), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
-- **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
-- **Modules and imports are not needed** — any file can be opened from code.
-- **`MrGreen.agent`** — first start (`#00cc22 = color`).
-- **Agent containers:** `step`, `cycle`, `speed`, `color`.
-- **Jump to a file without reset.** `agent.fileName = target`, `currentStep = 1`, `variables` preserved. `interpreter.reset()` — only on `^ :reset`.
-- **`occupied` error** — if the target file is occupied by another agent, status `PAUSED`, error `occupied, 1, target=..., agent=...`.
-- **`NavigateBehavior` removed** — no more "occupied" dialog. Agent jumps without reset, or `occupied` error.
-- **EN UI + RU localization** — Settings → Language.
-- **Syntax highlight** (simple) — `TrueHighlighter`.
-- **`MainScreen_User.kt`**: `errorLines` red, `resolvedLines` green, `assert` yellow/red in editor and log.
-- **`TerminalPanel`** — Log / Terminal tabs (real OS terminal).
-- **`SnackbarHost`** — warning/error/info snackbars (5 s, `📋`, `×`).
-- **`GoldenTests`** — `withTimeout(30_000)`, `waitUntilMs = 0`.
-- **`JsonParser`** — LRU 100.
-- **`parse(code)` cache** — by reference.
-- **`mathResultCache`** — 500 → 2000.
-- **`publishActive`** — from Main thread.
-- **`AgentsModel.create`** — rejects duplicate names.
-- **CLI** — `be.true.Main` restored.
-- **`NavigateBehavior` in settings.txt** — removed.
-- **Version:** language 0.11.0, interpreter 1.1.0.
+### Added
+- `:data:groupby` — группировка с агрегацией (count/sum/min/max/avg)
+- `:api:mock` / `:api:mock:reset` / `:api:mock:list` — моки API
+- `:ask` — диалог с вопросом (асинхронный; `:ask:pending`, `:ask:id`)
+- `:schedule:limit` — лимит jobs на агента
+- `:stream:seek` — перемотка потока
+- `:error:pause` / `:assert:pause` — флаги паузы при ошибке
+- `:pinned:add/remove/list/clear` — закреплённые контейнеры (заменяет `:watch`)
+- Синонимы имён: `12 = twelve, number, a`; goto по alias
+- `?` — условие только если `cond ? action`; иначе символ строки
+- `,` — не ломает `:message`/`NAMING`
+- Шаблоны обучения: `templates/*.cycle` (5 шаблонов: Hello, Счётчик, Калькулятор, Пещера, Плагин)
+- `settings.true` / `progress.true` (заменяют `.txt`)
+- `recentProjects` — история открытых папок
+- Фигура агента на холсте (кружок, кнопки play/pause/step, меню)
+- Временная шкала (Timeline) — полоса активности
+- Подсветка текущей строки (редактор + таблица)
+- `:watch` / `:diff` / `:history` / `:agent:sync` (Autocomplete)
+- `:ext` — динамические имена в Autocomplete
 
-### Removed / deprecated
+### Changed
+- `:console` → `:terminal` (deprecated алиас)
+- `StreamState` — один класс (Substrate.kt)
+- `SecretModel.cache` — ConcurrentHashMap + synchronized
+- `scheduleJobs` — SnapshotStateList
+- Ошибки — **не пауза** (default); пауза — через флаг
+- Поток = столбец (`.cycle`); `columnJobs` вместо `agentJobs`
+- UI-синхронизация — `withContext(Dispatchers.Main)`
+- Агент — только для `main.cycle`; другие `.cycle` — без агента
+- Цвета приглушены (ваби-саби): `ACCENT=#5B8DB8`, `ERROR=#B85C5C`, `WARN=#C49A5C`
+- Отступы 4/8/12/20/32; типографика 9/11/13/16/20/26
+- Таблица 60/100/160/260; снап-точки 40/64/104/168
 
-- `:foreach` — removed (replaced by `:each`).
-- `:agent:main => :stop` / `:pause` / `:resume` / `:delete` — removed (replaced by `^ :stop` / `:pause` / `:resume` / `:delete`).
-- `:agent:main => file:other` / `-> file:other` / `-> nothing` — removed.
-- `:agent:main:currentFile` / `:agent:main:currentStep` — removed.
-- `NavigateBehavior` (enum, field, dialog, `pendingNavigateFile`) — removed.
-- `stepBackLimit` — removed (replaced by `:historyLimit`).
-- `:data:insert` / `:data:set` / `:data:length` — deprecated.
-- `:instruction` — removed (was in 0.10.0).
-- `MAX_AGENTS` — removed.
-- `.true` extension — no longer used (reserved for project settings).
-- `pauseAll` (without `:`) — not a system name. Only `:pauseAll`.
+### Fixed
+- `runFileStreamInternal` — реальное чтение первой порции
+- `controlAgent WAIT` — `*wait` → callerId
+- `InterpreterCompat.collectFunctions` — коллбэки
+- `retryAction` — добавлен
+- `occupied` — без паузы (E46)
+- `resetFile` → `VisualModel.clear` (R10 E13)
 
----
+### Removed
+- `:empty` (заменено на `:data:empty`)
+- `:cycle:stop` (есть `:stop`)
+- `:loop`/`:endloop` (программа = цикл)
+- `final_gold`/`score` в игре (лишние сущности)
+- Кавычки в игре (не нужны)
 
-## 0.10.0 — Agent = `.agent` file, `.cycle` instead of `.true`
+## 0.12.0 (2026-10-27)
 
-- **Terminology:** "container" / "named container" instead of "data string".
-- **`.cycle`** — cycle (file-function). **`.agent`** — agent (file-function + UI buttons). **`.true`** — no longer (reserved for project settings).
-- **Any extension** — agent can jump to any file via `^`.
-- **`:instruction` removed.** `actions` — `":run"` (no `:instruction`). `:run` without argument — executes the current line. `:log` without argument — logs the current line.
-- **`^ N`** — jump to line N (was `^ step:N`).
-- **`^ label`** — jump to label (no dot, exists in the file).
-- **`^ file.cycle` / `^ file.agent` / `^ data.txt`** — jump to file (with dot). **`^ notes`** (no dot) — error.
-- **`^ :stop` / `:pause` / `:resume` / `:delete`** — agent commands (was `:agent:main => :stop` / `:pause` / `:resume` / `:delete`).
-- **`^ :reset`** — new (reset the file, like `⟲`).
-- **Agent containers:** `step` (line number), `cycle` (file name).
-- **Removed:** `:agent:main:currentFile`, `:agent:main:currentStep` (duplicates).
-- **Removed:** `:agent:main => file:other`, `-> file:other`, `-> nothing` (agent moves only `^`).
-- **Left:** `:agent:main:status`, `:agent:main:waiter`, `:agent:status`, `<ms> => :agent:wait`.
-- **1 agent per file — removed.** Multiple `.agent` — multiple agents. `MAX_AGENTS` — removed. Order — by Y (top to bottom).
-- **UI:** file buttons (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, all files. Agent buttons (`▶⏸⏹⏭⏮`) — bottom, only `.agent`. `⋯` — **removed**. `Templates…`, `Actions…`, `Copy to…`, `Move to…`, `Delete agent` — **removed**.
-- **`TemplatesDialog`** — left in `Settings`.
-- **`ActionsDialog` / `CopyToDialog` / `MoveToDialog` / `DeleteAgentDialog`** — **removed**.
-- **Docs:** `LANGUAGE.md`, `README-TRUE.md`, `README.md`, `SAMPLES.md`, `PROMPT.md`, `ROADMAP.md`, `CHANGELOG.md` — updated.
+### Added
+- `:mem:*` — память asm/C-стиль (`alloc/free/write/read/copy/move/fill/size/dump/reset`), указатели `@addr`
+- `:terminal*` — PTY-терминал (`open/write/read/close/list`); `:console` — deprecated алиас
+- `:open:url/file/folder` — ОС (`Desktop.browse/open`)
+- `:xml:get/names/values` — XML (XXE-safe)
+- `:secret:get/set/remove/list` — AES-GCM
+- `:send:telegram/max/email` — уведомления (javax.mail)
+- `:schedule` — cron-utils
+- `:sound:play/stop` — WAV + MP3
+- `:websocket:*` — Java-WebSocket
+- `:stream:*` — `:file:stream`, `:stream:next/close/reset/limit/list`
+- `:data:empty` — пустота
+- `:api:*:retry` — retry с backoff, idempotent
+- `:background` — фон визуализации (tile/stretch/center/fit)
+- `:ext:*` — плагины через `Extensions`
+- Визуализация: `rect_N`, `VisualModel`, `VisualFeed`, `TablePanel`, `ContextMenu`, `InlineEditor`, `AgentFooter`
+- Примеры по ролям (12 ролей × 5 задач)
+- Autocomplete — 61 ключевое слово
 
----
+### Changed
+- `:console` → `:terminal`
+- `StreamState` — один класс (Substrate.kt)
+- `SecretModel.cache` — ConcurrentHashMap + synchronized
+- `scheduleJobs` — SnapshotStateList
 
-## 0.9.1 — `foreach` without `.`, `:error`, `:sum`/`:pop` without prefix
+### Fixed
+- `runFileStreamInternal` — реальное чтение первой порции
+- `controlAgent WAIT` — `*wait` → callerId
+- `InterpreterCompat.collectFunctions` — коллбэки
+- `retryAction` — добавлен
 
-- **`foreach` without `.`.** End of body — no `,` at the end of the line.
-- **Prefix `:data` / `:math` optional.** `:sum`, `:min`, `:max`, `:avg`, `:product`, `:count`, `:push`, `:pop`, `:reverse`, `:unique`, `:contains`, `:slice`, `:join`, `:charAt`, `:substring`, `:indexOf`, `:replace`, `:lower`, `:upper`, `:trim`, `:chars`, `:remove`, `:swap`, `:deleteRange`, `:replaceRange`, `:sort`, `:size`, `:s` — without prefix. `:math:sort` (numbers), `:json:*`, `:file:*`, `:api:*` — mandatory.
-- **`:error` — error stack.** `:error`, `:error:line`, `:error:message`, `:error:lines`, `:error:messages`. Reset — `reset()`.
-- **Reaction to errors — `actions`:** `":error ? ^ :handle"`. `:error` does not clear `PAUSED`.
-- **Chains `=>`** — `a => :f => :g => dst`.
-- **Name before use** — `= name` before `:f => name`.
-- **Examples without `=> :stop`** — work in the middle of a loop.
+### Removed
+- `:empty` (заменено на `:data:empty`)
 
----
+## 0.11.0 (2026-10-26)
 
-## 0.9.0 — Everything is a function with `:`
-
-- **Everything is a function with `:`.** `:agent:name:currentFile`, `:agent:name:waiter`, `:return` → `:result`, `:parameters`, `:instruction`, `:run`, `:log`, `:message`.
-- **`:result`** — stores, does not return. Waiter — auto by `:result`.
-- **`:instruction`** — current line of the agent.
-- **`actions`** — the agent's program (multiline, `:instruction => :run`).
-- **`:run`** — atomic execution (no `actions`, no recursion). No argument — no-op.
-- **`file:a => file:b`** — copy. **`file:a -> file:b`** — move.
-- **`file:a => var`**, **`var => file:b`**.
-- **`v ->| data:y:3`** — insert (move). **`v =>| data:y:3`** — insert (copy). **`v -> data:y:3`** — replace.
-- **Removed:** `:data:insert` (→ `->|`), `:data:set` (→ `->`), `:data:length` (→ `:data:y:size` / `:s`).
-- **New:** `:s`, `:range`, `:repeat`, `:message`, `:save`, `:file:a => :path`, `:main:l:1`.
-- **Naming of actions:** `a + 1 => a = action` — not substituted.
-- **System names reserved.**
-- **`main.true`** — a normal function, runs first.
-- **Read/write — symmetric** (except `@`).
-- **Vertical files** — `fileOrder`, `↑` / `↓`.
-- **`lastPressed`** — highlight of the active agent button.
-- **Search / replace** (`Ctrl+F` / `Ctrl+R`), `searchMode`.
-- **`Ctrl+P`** — play/pause. **`Ctrl+↑` / `Ctrl+↓`** — step back/forward.
-- **`ActionsPanel`** — copy on click, search, description, Pin, collapsed.
-- **Panel state persistence**.
-- **Expandable editor** (up to half of the screen), mouse selection.
-- **Renaming of variables** (diff + Ctrl).
-- **Values when code changes.**
-
----
-
-## 0.8.0 — Agents
-
-- 1 agent per file. Rainbow (7).
-- `:agent:<name> => :stop/:pause/:resume/:delete`.
-- `:agent:<name> -> file:<target>` (move), `=> file:<target>` (copy).
-- `:agent:<name> -> nothing`, `file:<name> -> nothing`, `<var> -> nothing`.
-- `<ms> => :agent:wait`.
-- `Cycles` — column ribbon.
-- `<name>:splitter`.
-
----
-
-## 0.7.0 — data:join, file:data/origin/lines
-
-- `data:join`.
-- `file:data`, `file:origin`, `file:lines`.
-- `=> :next` / `=> :back` — deprecated.
-- Principle 12.
-
----
-
-## 0.6.1 — Marks
-
-- `data:substring` / `indexOf` / `replace` / `lower` / `upper` / `trim` / `chars` / `charAt` — only `x`.
-- `math` — only for calculations; for concatenation — `$`.
-
----
-
-## 0.6.0 — math/data, foreach, functions
-
-- `math` / `data` separation.
-- `foreach` with axes, variables, body.
-- `.:function`, `:return` (now `:result`).
-- `filter`, `matches`.
-- `data:set` (now `->`).
-- `api:websocket`.
-- `json:get`, `json:set`, `json:names`, `json:values`.
-- One `?`.
-- `:parameters`.
+### Added
+- Ядро: `:math`, `:data`, `:api`, `:json`, `:simple`, `:agent`, `:error`, `:assert`
+- 6 библиотек: cron-utils, jlayer, mp3spi, Java-WebSocket, javax.mail, pty4j
+- `:ext` — плагины
+- Визуализация — `rect_N`
+- Примеры по ролям (12 ролей × 5 задач)

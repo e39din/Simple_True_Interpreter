@@ -1,156 +1,126 @@
-# Roadmap
+# ROADMAP
 
-## Done
+## Плагины (через Extensions)
 
-### Language
-- [x] `math` / `data` separation.
-- [x] `filter`, `matches`.
-- [x] `api:websocket`.
-- [x] `json:get/set/names/values`.
-- [x] Parentheses in conditions and `math`.
-- [x] `->|` / `=>|` — insert.
-- [x] `file:a => file:b`, `file:a -> file:b`.
-- [x] `:result` (instead of `:return`).
-- [x] `:instruction` — **removed**.
-- [x] `actions` — `":run"`.
-- [x] `:run` — atomic execution.
-- [x] `:log` — log the current line.
-- [x] Waiter — auto by `:result`.
-- [x] All functions — with `:`.
-- [x] `:s` — short for `:size`.
-- [x] `:range`, `:repeat`.
-- [x] `:message` — type `"message"`.
-- [x] `:save` (`=> :save`, `file_name:save`).
-- [x] `:file:a => :path`.
-- [x] `:data:y:size` (instead of `:data:length`).
-- [x] Action naming.
-- [x] Prefix `:data` / `:math` is optional.
-- [x] `:error` — error stack, format `<code>, <1|0>, <details>`, `:error:resolve`. Does not pause by default.
-- [x] Chains `=>`.
-- [x] Name before use (`= name`).
-- [x] **Terminology:** container / named container.
-- [x] **`.cycle`** — cycle. **`.agent`** — agent. **`.true`** — no longer used.
-- [x] **`^ N`** — jump to line N.
-- [x] **`^ file.cycle`** / **`^ file.agent`** / **`^ data.txt`** — jump to file.
-- [x] **`^ :stop`** / **`:pause`** / **`:resume`** / **`:delete`** / **`:reset`** — commands.
-- [x] **Agent containers:** `step`, `cycle`, `speed`, `color`.
-- [x] **1 agent per file — removed.**
-- [x] **Movement order** — by Y.
-- [x] **`copy`** (`COPY_RE`).
-- [x] **Substitution of named containers** — a name in operation position is substituted and executed.
-- [x] **`=>` is never naming** — only `= name`.
-- [x] **Content is what comes before the operation** — `a + 1 => sum = func1` ≡ `\ a + 1 => sum \ = func1`.
-- [x] **`:map` / `:reduce` / `:fold` / `:each`** — new.
-- [x] **`:foreach` removed.**
-- [x] **`:stack:peek`** — new.
-- [x] **`:simple:*`** — 36 functions.
-- [x] **`:simple:click`** — UI element click.
-- [x] **`:simple:clickAt`** — absolute screen coordinates (AWT Robot). Dangerous, runtime only, no headless.
-- [x] **`:simple:type`** — character by character (like a human).
-- [x] **`:simple:openTerminal` / `:simple:closeTerminal` / `:simple:sendTerminal` / `:simple:typeTerminal`** — real OS terminal.
-- [x] **`:simple:search:*`** — 8 search functions.
-- [x] **`:pauseAll` / `:resumeAll`** — pause / resume all agents.
-- [x] **`:assert`** — condition check. Success — green, failure — red. Does not pause by default.
-- [x] **`:agent:wait:timeout`**.
-- [x] **Settings:** `:historyLimit`, `:logLimit`, `:strictMode`, `:autoSync`.
-- [x] **Escaping:** `\ ` (line), `\ ... \` (mid-line literal), `\,` / `\;` / `\.` (single separator).
-- [x] **Strict Mode** — forbids system functions, allows user `:file_name` and substitution.
-- [x] **Modules and imports are not needed.**
-- [x] **Any subject starting with `:` is both a function and a container. No exceptions.**
-- [x] **`MrGreen.agent`** — first start.
-- [x] **EN UI + RU localization.**
+### GPIO / Serial
 
-### UI
-- [x] Undo/Redo, auto-save.
-- [x] SearchDialog (`find` / `replace`).
-- [x] Actions by families, search, description, Pin.
-- [x] Strict Mode.
-- [x] Golden tests.
-- [x] Tabs → chips.
-- [x] Values and Actions collapse.
-- [x] `⛶` — expand.
-- [x] `SamplesDialog`.
-- [x] `TabsPicker`.
-- [x] `lastPressed` — button highlight.
-- [x] `Ctrl+P` — play/pause.
-- [x] `Ctrl+↑` / `Ctrl+↓` — step back/forward.
-- [x] `Ctrl+F` / `Ctrl+R` — find/replace.
-- [x] Expandable editor.
-- [x] Mouse selection.
-- [x] Variable renaming.
-- [x] Values when code changes.
-- [x] Vertical files (`fileOrder`, `↑` / `↓`).
-- [x] Panel state persistence.
-- [x] **File buttons** (`⟲`, `↑`, `↓`, `✎`, `🗑`) — top, all files.
-- [x] **Agent buttons** (`▶⏸⏹⏭⏮`) — bottom, only `.agent`.
-- [x] **`⋯` removed** — everything in the button row.
-- [x] **`NavigateBehavior` removed** — no more "occupied" dialog.
-- [x] **`:error` red/green highlight** in editor and log.
-- [x] **`:assert` yellow/red highlight** in editor and log. Filter `Asserts` in log.
-- [x] **Syntax highlight** (simple) — `TrueHighlighter`.
-- [x] **EN/RU switcher** (Settings → Language).
-- [x] **TerminalPanel** — Log / Terminal tabs (real OS terminal).
-- [x] **SnackbarHost** — warning/error/info snackbars.
+- `:gpio:read/write`, `:serial:open/read/write/close`
+- Реализация: `Extensions.register(GpioExtension())`
+- Зависимости: `com.fazecast:jSerialComm`
 
-### Infrastructure
-- [x] `SAMPLES.md` with `!!`.
-- [x] `::before` / `::after` — setup/teardown in `SAMPLES.md`.
-- [x] `GoldenTests` (parallel).
-- [x] `true-core` — separate JVM module.
-- [x] Unit tests `Interpreter`.
-- [x] `FUNCTIONS.md` (short format, 12 languages, no Datalog).
+### Sandbox для `:ext`
 
-## In progress
+- Изоляция плагинов (SecurityManager / отдельный classloader)
+- Ограничение доступа к файлам/сети
 
-- [ ] Dark theme.
-- [ ] CI under Windows/macOS/Linux.
-- [ ] `:agent:name:actions` — read/write `actions`.
+---
 
-## Plans
+## Виртуализация визуализации
 
-- [ ] **Mouse/keyboard recording** — record user actions (mouse, keyboard, terminal) into a scenario (`.cycle` / `.json`), play back via `:simple:clickAt` / `:simple:type` / `:simple:sendTerminal`. UI: `⏺` (Record) / `⏹` (Stop) in `MenuBar`. Format: `#record` block in `.cycle` or separate `.record` file. Functions: `:simple:record:start`, `:simple:record:stop`, `:simple:record:save`, `:simple:record:play`, `:simple:record:list`.
-- [ ] **Rust + egui.** Port `Interpreter` to Rust. Goal: remove JVM, cold start ~5–50 ms.
-- [ ] **Full syntax highlight** — tokenization of all keywords and containers.
-- [ ] **MD renderer** in `DocDialog` — highlight for `true` / `python` / etc.
-- [ ] `Scheme` / `Table` — real views.
-- [ ] Publish `true-core` to Maven.
-- [ ] **Rust port of `true-core`.**
-- [ ] Multilingual (Lua via LuaJ, JS via Rhino).
-- [ ] External interpreter via WebSocket.
-- [ ] `.true` — project settings file.
-- [ ] **Screen reader** support in `TerminalPanel` and `Log`.
-- [ ] **PTY support** for `:simple:openTerminal` (JNA).
-- [ ] **ANSI color rendering** in `TerminalPanel`.
-- [ ] **Recording playback speed control** (`:simple:record:play, speed`).
+- 100+ фигур: LazyRow + Canvas + виртуализация по viewport
+- Кэш изображений (ограничение 10)
 
+---
 
-## What we won't do (and why)
+## Звук
 
-### Compilation — not our path
+- `:sound:channel` — каналы (несколько звуков одновременно)
+- `:sound:volume`
 
-- **No compilation.** Compilation is yesterday. Today is **on-the-fly execution** (JIT, interpretation, dynamic substitution).
-- **We have everything for it:** powerful hardware, ready-to-use software (JVM, Rust) that can execute instructions on the fly.
-- **Compilation breaks the main thing:** a program that changes itself. In True, code is a database, `syncCodeWithVariables` rewrites the declaration text. With compilation, this is impossible.
-- **Compilation kills interactivity:** step-by-step mode, `Step Back`, real-time `Values`, agent `actions` on each step — all of that is only interpretation.
-- **Speed is not a problem:** `:math`, `:data:*`, `:file:*` — these are built-in functions, already "compiled" (JVM/Rust). Interpretation of True is dispatching containers, not loops over millions of elements.
+---
 
-### What else we won't do
+## JSON
 
-- **Types.** Everything is a container. No `int`, `float`, `bool`, `list`, `map`. Axes `l/x/y/z` — the only structure.
-- **`for` / `while`.** Only the implicit program loop + `^` + `?`.
-- **Classes, inheritance, OOP.** File-functions, agents, `actions` — instead of classes.
-- **Multithreading with shared memory.** Agents are isolated coroutines. Communication — via files and `:agent:*`, not `Mutex`.
-- **Package managers, dependencies.** One file — one program. `:file:*`, `:api:*` — instead of libraries.
-- **Garbage collection as a problem.** Containers are immutable, interned. JVM/Rust handle it.
-- **"Syntactic sugar".** `a + b => :math` is already nice. `=` / `=>` / `->` / `^` / `?` — 5 operators. No more needed.
-- **`.true` extensions.** No longer used (reserved for project settings).
-- **Modules / imports.** Any file can be opened from code — `:file:read` / `^ file.cycle` / `:file_name`. No `import` / `require` / `use`.
+- `:json:get:deep` — вложенный JSON
+- `:json:path` — JSONPath
 
-### Where to invest
+---
 
-- **Rust + egui** — fast cold start, native binary, no JVM.
-- **Multilingual** — Lua (LuaJ), JS (Rhino) as "file-functions".
-- **External interpreter via WebSocket** — for heavy languages (Python, Erlang).
-- **Dark theme**, **CI**, **publishing** `true-core`.
-- **Interactive Tutorial** — advanced, interactive.
-- **Mouse/keyboard recording** — automate UI tests, record scenarios, play back.
+## Терминал
+
+- `:terminal:read:wait` — интерактивное чтение
+- `:terminal:powershell` — Windows
+
+---
+
+## Память
+
+- `:mem` shared (между агентами)
+- `:mem` ByteArray (asm-точность)
+
+---
+
+## WebSocket
+
+- `:websocket:messages` — история
+- `:websocket:auth` — токен
+
+---
+
+## Отправка
+
+- `:send:email:attach` — вложения
+- `:send:telegram` — markdown/HTML (`parse_mode`)
+- `:send:max` — обновление API
+
+---
+
+## XML
+
+- `:xml:attrs` — атрибуты
+- `:xml:xpath` — полный XPath
+
+---
+
+## Расписание
+
+- `:schedule:limit` — реализовано (1.3.0)
+- `:schedule:tz` — реализовано
+
+---
+
+## Визуализация
+
+- `:background` слои
+- `:rect` condition из кода (ручное)
+- `:table` — 5 чисел area (z,x,y,w,h)
+- Виртуализация 100+ фигур
+- Анимация (`:anim:set/play/stop`, `AnimationSpec`, спрайты)
+
+---
+
+## Секреты
+
+- Windows ACL (`secret.key`)
+
+---
+
+## AI
+
+- DeepSeek/Claude — стриминг ответов
+- `:api` rate limit
+- `:api:model` — выбор модели
+
+---
+
+## UI
+
+- Quick Run panel / REPL
+- Виртуализация 100+ фигур
+- Анимация (спрайты, состояния)
+
+---
+
+## Документация
+
+- `docs/roles/*.md` — 12 ролей (реализовано)
+- `docs/compare/*.md` — сравнение с Python/asm/C
+
+---
+
+## Тесты
+
+- `:schedule` — реальное время (flaky)
+- `:websocket` — port=0
+- `:sound` — mock AudioSystem
+- PTY — mock + native
